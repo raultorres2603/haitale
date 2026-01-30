@@ -3,6 +3,7 @@ package ai.haitale.service;
 import ai.haitale.model.Mod;
 import ai.haitale.model.ModRecommendation;
 import ai.haitale.model.WorldPreferences;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.serde.ObjectMapper;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
@@ -21,6 +22,18 @@ public class AIRecommendationService {
     private final ModRepositoryService modRepositoryService;
     private final OpenRouterService openRouterService;
     private final ObjectMapper objectMapper;
+
+    @Value("${ai.recommendation.prefilter.enabled:true}")
+    private boolean preFilterEnabled;
+
+    @Value("${ai.recommendation.prefilter.maxMods:50}")
+    private int maxModsToAI;
+
+    @Value("${ai.recommendation.prefilter.threshold:0.15}")
+    private double preFilterThreshold;
+
+    @Value("${ai.recommendation.description.maxLength:100}")
+    private int maxDescriptionLength;
 
     public AIRecommendationService(
         ModRepositoryService modRepositoryService,
@@ -56,10 +69,27 @@ public class AIRecommendationService {
      * Get AI-based recommendations using OpenRouter
      */
     private List<ModRecommendation> getAIBasedRecommendations(String worldDescription, List<Mod> availableMods) {
-        // Prepare mod list for AI
-        List<String> modDescriptions = availableMods.stream()
-            .map(mod -> String.format("%s: %s - %s (License: %s)",
-                mod.getId(), mod.getName(), mod.getDescription(), mod.getLicense()))
+        List<Mod> modsToSend = availableMods;
+
+        // PRE-FILTER: Use keyword matching to reduce the list before sending to AI
+        // This significantly reduces API costs and improves response time
+        if (preFilterEnabled) {
+            modsToSend = preFilterModsByKeywords(worldDescription, availableMods);
+            LOG.info("Pre-filtered {} mods down to {} candidates for AI evaluation",
+                     availableMods.size(), modsToSend.size());
+        } else {
+            LOG.info("Pre-filtering disabled, sending all {} mods to AI", availableMods.size());
+        }
+
+        if (modsToSend.isEmpty()) {
+            LOG.warn("Pre-filtering eliminated all mods, falling back to rule-based");
+            return null;
+        }
+
+        // Prepare mod list for AI - use concise descriptions to reduce token usage
+        List<String> modDescriptions = modsToSend.stream()
+            .map(mod -> String.format("%s: %s - %s",
+                mod.getId(), mod.getName(), truncateDescription(mod.getDescription())))
             .collect(Collectors.toList());
 
         String aiResponse = openRouterService.generateModRecommendations(worldDescription, modDescriptions);
@@ -70,11 +100,50 @@ public class AIRecommendationService {
 
         // Parse AI response
         try {
-            return parseAIResponse(aiResponse, availableMods);
+            return parseAIResponse(aiResponse, modsToSend);
         } catch (Exception e) {
             LOG.error("Failed to parse AI response: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Pre-filter mods using keyword matching to reduce the list sent to AI.
+     * This significantly reduces API costs and response time.
+     */
+    private List<Mod> preFilterModsByKeywords(String worldDescription, List<Mod> allMods) {
+        // If the list is already small, no need to filter
+        if (allMods.size() <= 20) {
+            return allMods;
+        }
+
+        WorldPreferences tempPrefs = new WorldPreferences(worldDescription);
+
+        // Score all mods and keep those above the configured threshold
+        List<Mod> filteredMods = allMods.stream()
+            .filter(mod -> calculateRelevanceScore(mod, tempPrefs) > preFilterThreshold)
+            .sorted((m1, m2) -> Double.compare(
+                calculateRelevanceScore(m2, tempPrefs),
+                calculateRelevanceScore(m1, tempPrefs)))
+            .limit(maxModsToAI)  // Send at most N mods to AI for final ranking
+            .collect(Collectors.toList());
+
+        // If filtering was too aggressive, return top 20 mods by generic criteria
+        if (filteredMods.size() < 5) {
+            LOG.warn("Pre-filtering too aggressive, using top {} mods instead", Math.min(20, allMods.size()));
+            return allMods.stream().limit(20).collect(Collectors.toList());
+        }
+
+        return filteredMods;
+    }
+
+    /**
+     * Truncate description to reduce token usage
+     */
+    private String truncateDescription(String description) {
+        if (description == null) return "";
+        if (description.length() <= maxDescriptionLength) return description;
+        return description.substring(0, maxDescriptionLength) + "...";
     }
 
     /**
