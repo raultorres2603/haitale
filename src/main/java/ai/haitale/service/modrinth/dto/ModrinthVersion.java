@@ -10,6 +10,7 @@ public class ModrinthVersion {
     public String id;
     public String name;
     public String version_number;
+    public List<String> game_versions;
     public List<ModrinthFile> files;
 
     @Serdeable

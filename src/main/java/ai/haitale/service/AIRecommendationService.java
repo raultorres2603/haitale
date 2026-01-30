@@ -92,17 +92,13 @@ public class AIRecommendationService {
             List<ModRecommendation> result = new ArrayList<>();
 
             for (OpenRouterService.AIRecommendation aiRec : recommendations) {
-                Mod mod = availableMods.stream()
+                availableMods.stream()
                     .filter(m -> m.getId().equals(aiRec.getModId()))
                     .findFirst()
-                    .orElse(null);
+                    .ifPresent(mod -> result.add(new ModRecommendation(mod, aiRec.getReasoning(), aiRec.getRelevanceScore())));
+             }
 
-                if (mod != null) {
-                    result.add(new ModRecommendation(mod, aiRec.getReasoning(), aiRec.getRelevanceScore()));
-                }
-            }
-
-            return result;
+             return result;
         } catch (IOException e) {
             LOG.error("Failed to parse AI recommendations", e);
             return null;
@@ -232,7 +228,7 @@ public class AIRecommendationService {
             reasoning.append("Brings magical gameplay. ");
         }
 
-        if (reasoning.length() == 0) {
+        if (reasoning.isEmpty()) {
             reasoning.append("Matches your world description keywords.");
         }
 

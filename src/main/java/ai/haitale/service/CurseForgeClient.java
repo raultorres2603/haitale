@@ -57,19 +57,22 @@ public class CurseForgeClient {
                 return List.of();
             }
 
-            Map<String, Object> json = objectMapper.readValue(resp.body().getBytes(StandardCharsets.UTF_8), Map.class);
-            if (!(json.get("data") instanceof List)) return List.of();
-            List<?> data = (List<?>) json.get("data");
+            // Use Jackson for generic parsing to avoid unchecked casts
+            com.fasterxml.jackson.databind.ObjectMapper jackson = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> json = jackson.readValue(resp.body(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            Object dataObj = json.get("data");
+            if (!(dataObj instanceof List<?> dataList)) return List.of();
 
             List<Mod> result = new ArrayList<>();
-            for (Object o : data) {
-                if (!(o instanceof Map)) continue;
-                Map entry = (Map) o;
+            for (Object o : dataList) {
+                if (!(o instanceof Map<?,?> entryMap)) continue;
+                Map<?,?> entry = entryMap;
                 String id = asString(entry.get("id"));
                 String name = asString(entry.get("name"));
                 String summary = asString(entry.get("summary"));
                 String author = null;
-                if (entry.get("author") instanceof Map) author = asString(((Map) entry.get("author")).get("name"));
+                Object authorObj = entry.get("author");
+                if (authorObj instanceof Map<?,?> authorMap) author = asString(authorMap.get("name"));
 
                 Mod mod = new Mod(
                     id != null ? id : java.util.UUID.randomUUID().toString(),

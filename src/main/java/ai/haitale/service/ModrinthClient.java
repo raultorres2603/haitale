@@ -18,9 +18,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Singleton
 public class ModrinthClient {
@@ -30,7 +31,7 @@ public class ModrinthClient {
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private String baseUrl;
+    private final String baseUrl;
 
     public ModrinthClient(ObjectMapper objectMapper, @Value("${modrinth.api.base:}") String configuredBase) {
         this.objectMapper = objectMapper;
@@ -42,9 +43,8 @@ public class ModrinthClient {
         }
     }
 
-    /**
-     * Search projects on Modrinth and return mapped Mods. Limit capped by the API call.
-     */
+    // Public search remains simple: map hits to Mod via projectToMod
+    @SuppressWarnings("unchecked")
     public List<Mod> search(String query, int limit) {
         try {
             String encoded = java.net.URLEncoder.encode(query == null ? "" : query, StandardCharsets.UTF_8);
@@ -61,25 +61,20 @@ public class ModrinthClient {
                 return List.of();
             }
 
-            // Modrinth returns an object with 'hits' array
             Map<String, Object> body = objectMapper.readValue(resp.body().getBytes(StandardCharsets.UTF_8), Map.class);
             Object hitsObj = body.get("hits");
-            if (!(hitsObj instanceof List)) {
+            if (!(hitsObj instanceof List<?> hitsList)) {
                 LOG.warn("Unexpected Modrinth search response format");
                 return List.of();
             }
 
-            List<?> hits = (List<?>) hitsObj;
             List<Mod> result = new ArrayList<>();
 
-            for (Object h : hits) {
+            for (Object h : hitsList) {
                 try {
                     ModrinthProject proj = objectMapper.readValue(objectMapper.writeValueAsBytes(h), ModrinthProject.class);
-                    // For each project, fetch best version info
                     Mod mod = projectToMod(proj, null);
-                    if (mod != null) {
-                        result.add(mod);
-                    }
+                    if (mod != null) result.add(mod);
                 } catch (Exception e) {
                     LOG.debug("Failed to map project hit: {}", e.getMessage());
                 }
@@ -94,131 +89,114 @@ public class ModrinthClient {
     }
 
     /**
-     * Map a ModrinthProject to our Mod model by selecting an appropriate version/file.
-     * If `preferredGameVersion` is non-null, try to select files matching that game version.
+     * Top-level mapping from project -> Mod.
+     * This method is now small and delegates responsibilities to helpers for clarity.
      */
     public Mod projectToMod(ModrinthProject project, String preferredGameVersion) {
         if (project == null) return null;
         String identifier = project.slug != null ? project.slug : project.id;
         if (identifier == null) return null;
 
-        // Try to fetch latest (or specified) version details
+        String versionId = pickVersionId(project);
+        if (versionId == null) {
+            LOG.debug("No version id for project {}", identifier);
+            return null;
+        }
+
+        ModrinthVersion version = fetchVersion(versionId);
+        if (version == null) return null;
+
+        List<ModrinthVersion.ModrinthFile> files = filterDownloadableFiles(version);
+        if (files.isEmpty()) return null;
+
+        List<ModrinthVersion.ModrinthFile> candidateFiles = selectCandidateFiles(files, version, preferredGameVersion);
+        ModrinthVersion.ModrinthFile chosen = chooseBestFile(candidateFiles);
+        if (chosen == null) return null;
+
+        String[] checksum = extractChecksum(chosen);
+
+        return buildMod(project, version, chosen, checksum[0], checksum[1]);
+    }
+
+    // ------------ Helper methods (refactored) ------------
+
+    private String pickVersionId(ModrinthProject project) {
         String versionId = project.latest_version;
         if ((versionId == null || versionId.isEmpty()) && project.versions != null && !project.versions.isEmpty()) {
-            versionId = project.versions.get(0);
+            // prefer stream().findFirst() to avoid index-based access warnings
+            versionId = project.versions.stream().findFirst().orElse(null);
         }
+        return (versionId == null || versionId.isEmpty()) ? null : versionId;
+    }
 
-        ModrinthVersion version = null;
-        if (versionId != null && !versionId.isEmpty()) {
+    private ModrinthVersion fetchVersion(String versionId) {
+        try {
+            String verUri = baseUrl + "/version/" + java.net.URLEncoder.encode(versionId, StandardCharsets.UTF_8);
+            HttpRequest vReq = HttpRequest.newBuilder().uri(URI.create(verUri)).timeout(TIMEOUT).GET().build();
+            HttpResponse<String> vResp = httpClient.send(vReq, HttpResponse.BodyHandlers.ofString());
+            if (vResp.statusCode() != 200) {
+                LOG.warn("Failed to fetch Modrinth version {}: HTTP {}", versionId, vResp.statusCode());
+                return null;
+            }
+
+            // Typed DTO deserialization using injected ObjectMapper
+            ModrinthVersion version;
             try {
-                String verUri = baseUrl + "/version/" + java.net.URLEncoder.encode(versionId, StandardCharsets.UTF_8);
-                HttpRequest vReq = HttpRequest.newBuilder().uri(URI.create(verUri)).timeout(TIMEOUT).GET().build();
-                HttpResponse<String> vResp = httpClient.send(vReq, HttpResponse.BodyHandlers.ofString());
-                if (vResp.statusCode() == 200) {
-                    System.out.println("[ModrinthClient] fetched version response body: " + vResp.body());
-                    // Always use robust map-based parser to ensure files are extracted
-                    ModrinthVersion parsed = parseVersionFromJson(vResp.body());
-                    if (parsed != null && parsed.files != null && !parsed.files.isEmpty()) {
-                        version = parsed;
-                        System.out.println("[ModrinthClient] parseVersionFromJson produced files=" + parsed.files.size());
-                    } else {
-                        System.out.println("[ModrinthClient] parseVersionFromJson produced no files");
-                    }
-                } else {
-                    LOG.warn("Unexpected HTTP status fetching version {}: {}", versionId, vResp.statusCode());
+                version = objectMapper.readValue(vResp.body().getBytes(StandardCharsets.UTF_8), ModrinthVersion.class);
+            } catch (Exception ex) {
+                LOG.warn("Failed to deserialize Modrinth version JSON for {}: {}", versionId, ex.getMessage());
+                version = null;
+            }
+
+            // If typed deserialization produced no usable files, try a robust map-based fallback
+            if (version == null || version.files == null || version.files.isEmpty()) {
+                ModrinthVersion parsed = parseVersionFromJson(vResp.body());
+                if (parsed != null && parsed.files != null && !parsed.files.isEmpty()) {
+                    version = parsed;
                 }
-            } catch (Exception e) {
-                LOG.debug("Failed to fetch Modrinth version {}: {}", versionId, e.getMessage());
             }
-        }
 
-        // If version couldn't be fetched, skip creating a Mod (we want download URL & checksum)
-        if (version == null || version.files == null || version.files.isEmpty()) {
-            LOG.debug("No version/file available for project {}", identifier);
+            if (version == null || version.files == null || version.files.isEmpty()) return null;
+            return version;
+
+        } catch (IOException | InterruptedException e) {
+            LOG.warn("Error fetching Modrinth version {}: {}", versionId, e.getMessage());
             return null;
         }
-
-        // Choose best file: prefer those that include preferredGameVersion (if provided), else prefer largest file.
-        Optional<ModrinthVersion.ModrinthFile> chosen = version.files.stream()
-            .filter(f -> f.url != null && !f.url.isEmpty())
-            .sorted(Comparator.comparingLong((ModrinthVersion.ModrinthFile f) -> f.size).reversed())
-            .findFirst();
-
-        // If we had a preferredGameVersion we could add extra filtering here by file filename or metadata.
-
-        if (chosen.isEmpty()) {
-            LOG.debug("No downloadable file found for {}", identifier);
-            return null;
-        }
-
-        ModrinthVersion.ModrinthFile file = chosen.get();
-
-        // Choose a checksum algorithm/value: prefer sha256, sha384, sha512, then sha1
-        String checksumValue = null;
-        String checksumAlg = null;
-        if (file.hashes != null && !file.hashes.isEmpty()) {
-            if (file.hashes.containsKey("sha256")) {
-                checksumAlg = "SHA-256"; checksumValue = file.hashes.get("sha256");
-            } else if (file.hashes.containsKey("sha512")) {
-                checksumAlg = "SHA-512"; checksumValue = file.hashes.get("sha512");
-            } else if (file.hashes.containsKey("sha384")) {
-                checksumAlg = "SHA-384"; checksumValue = file.hashes.get("sha384");
-            } else if (file.hashes.containsKey("sha1")) {
-                checksumAlg = "SHA-1"; checksumValue = file.hashes.get("sha1");
-            } else if (!file.hashes.isEmpty()) {
-                Map.Entry<String,String> e = file.hashes.entrySet().iterator().next();
-                checksumAlg = e.getKey(); checksumValue = e.getValue();
-            }
-        }
-
-        String author = null;
-        if (project.authors != null && !project.authors.isEmpty()) {
-            author = project.authors.get(0).username;
-        }
-
-        Mod mod = new Mod(
-            project.id != null ? project.id : project.slug,
-            project.title != null && !project.title.isEmpty() ? project.title : (project.name != null ? project.name : project.slug),
-            version.version_number != null ? version.version_number : version.name,
-            project.description != null ? project.description : "",
-            file.url != null ? file.url : "",
-            checksumValue != null ? checksumValue : "",
-            checksumAlg != null ? checksumAlg : "",
-            "", // license not provided by this call (could call /project/:id for license)
-            author != null ? author : "",
-            "modrinth",
-            file.size
-        );
-
-        return mod;
     }
 
     private ModrinthVersion parseVersionFromJson(String json) {
-        System.out.println("[ModrinthClient] parseVersionFromJson input json=" + json);
         try {
-            Map verJson = objectMapper.readValue(json.getBytes(StandardCharsets.UTF_8), Map.class);
+            // Use Jackson databind for robust generic parsing into a typed map
+            com.fasterxml.jackson.databind.ObjectMapper jackson = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> map = jackson.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {});
             ModrinthVersion tmp = new ModrinthVersion();
-            Object verNum = verJson.get("version_number");
+            Object verNum = map.get("version_number");
             tmp.version_number = verNum != null ? String.valueOf(verNum) : null;
 
-            Object filesObj = verJson.get("files");
-            if (filesObj instanceof List) {
-                List<?> filesList = (List<?>) filesObj;
+            Object gameVersionsObj = map.get("game_versions");
+            if (gameVersionsObj instanceof List<?> gvList) {
+                tmp.game_versions = gvList.stream().map(Object::toString).collect(Collectors.toList());
+            }
+
+            Object filesObj = map.get("files");
+            if (filesObj instanceof List<?> filesList) {
                 List<ModrinthVersion.ModrinthFile> fList = new ArrayList<>();
                 for (Object fo : filesList) {
-                    if (!(fo instanceof Map)) continue;
-                    Map fmap = (Map) fo;
+                    if (!(fo instanceof Map<?, ?> fmap)) continue;
                     ModrinthVersion.ModrinthFile mf = new ModrinthVersion.ModrinthFile();
                     mf.url = fmap.get("url") != null ? String.valueOf(fmap.get("url")) : null;
                     Object sizeObj = fmap.get("size");
                     if (sizeObj instanceof Number) mf.size = ((Number) sizeObj).longValue();
                     Object hashesObj = fmap.get("hashes");
-                    if (hashesObj instanceof Map) {
-                        try {
-                            mf.hashes = (Map<String,String>) hashesObj;
-                        } catch (Exception ignore) {
-                            // best-effort
+                    if (hashesObj instanceof Map<?, ?> hashMap) {
+                        Map<String, String> hm = new HashMap<>();
+                        for (Map.Entry<?, ?> e : hashMap.entrySet()) {
+                            if (e.getKey() != null && e.getValue() != null) {
+                                hm.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
+                            }
                         }
+                        mf.hashes = hm;
                     }
                     mf.filename = fmap.get("filename") != null ? String.valueOf(fmap.get("filename")) : null;
                     fList.add(mf);
@@ -230,5 +208,78 @@ public class ModrinthClient {
             LOG.debug("parseVersionFromJson failed: {}", e.getMessage());
             return null;
         }
+    }
+
+    private List<ModrinthVersion.ModrinthFile> filterDownloadableFiles(ModrinthVersion version) {
+        return version.files.stream()
+            .filter(f -> f.url != null && !f.url.isEmpty())
+            .collect(Collectors.toList());
+    }
+
+    private List<ModrinthVersion.ModrinthFile> selectCandidateFiles(
+        List<ModrinthVersion.ModrinthFile> files,
+        ModrinthVersion version,
+        String preferredGameVersion
+    ) {
+        if (preferredGameVersion == null || preferredGameVersion.isEmpty()) return files;
+
+        boolean versionMatches = version.game_versions != null && version.game_versions.stream()
+            .anyMatch(gv -> gv.equalsIgnoreCase(preferredGameVersion));
+        if (versionMatches) return files;
+
+        List<ModrinthVersion.ModrinthFile> byName = files.stream()
+            .filter(f -> f.filename != null && f.filename.toLowerCase().contains(preferredGameVersion.toLowerCase()))
+            .collect(Collectors.toList());
+        return byName.isEmpty() ? files : byName;
+    }
+
+    private ModrinthVersion.ModrinthFile chooseBestFile(List<ModrinthVersion.ModrinthFile> candidateFiles) {
+        if (candidateFiles == null || candidateFiles.isEmpty()) return null;
+
+        Comparator<ModrinthVersion.ModrinthFile> bestComparator = Comparator
+            .comparingInt((ModrinthVersion.ModrinthFile f) -> {
+                if (f.hashes == null) return 0;
+                if (f.hashes.containsKey("sha256")) return 3;
+                if (f.hashes.containsKey("sha512")) return 3;
+                if (f.hashes.containsKey("sha384")) return 2;
+                if (f.hashes.containsKey("sha1")) return 1;
+                return 0;
+            }).thenComparingLong(f -> f.size);
+
+        return candidateFiles.stream().max(bestComparator).orElse(null);
+    }
+
+    /**
+     * Returns [algorithm, value] (algorithm may be a readable string like "SHA-256").
+     */
+    private String[] extractChecksum(ModrinthVersion.ModrinthFile file) {
+        if (file == null || file.hashes == null || file.hashes.isEmpty()) return new String[] {"", ""};
+        if (file.hashes.containsKey("sha256")) return new String[] {"SHA-256", file.hashes.get("sha256")};
+        if (file.hashes.containsKey("sha512")) return new String[] {"SHA-512", file.hashes.get("sha512")};
+        if (file.hashes.containsKey("sha384")) return new String[] {"SHA-384", file.hashes.get("sha384")};
+        if (file.hashes.containsKey("sha1")) return new String[] {"SHA-1", file.hashes.get("sha1")};
+        Map.Entry<String, String> e = file.hashes.entrySet().iterator().next();
+        return new String[] {e.getKey(), e.getValue()};
+    }
+
+    private Mod buildMod(ModrinthProject project, ModrinthVersion version, ModrinthVersion.ModrinthFile file, String checksumAlg, String checksumValue) {
+        String author = null;
+        if (project.authors != null && !project.authors.isEmpty()) {
+            author = project.authors.stream().findFirst().map(a -> a.username).orElse(null);
+        }
+
+        return new Mod(
+            project.id != null ? project.id : project.slug,
+            project.title != null && !project.title.isEmpty() ? project.title : (project.name != null ? project.name : project.slug),
+            version.version_number != null ? version.version_number : version.name,
+            project.description != null ? project.description : "",
+            file.url != null ? file.url : "",
+            checksumValue != null ? checksumValue : "",
+            checksumAlg != null ? checksumAlg : "",
+            "",
+            author != null ? author : "",
+            "modrinth",
+            file.size
+        );
     }
 }

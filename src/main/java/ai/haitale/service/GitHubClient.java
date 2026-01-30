@@ -46,19 +46,21 @@ public class GitHubClient {
                 return List.of();
             }
 
-            Map<String, Object> json = objectMapper.readValue(resp.body().getBytes(StandardCharsets.UTF_8), Map.class);
+            com.fasterxml.jackson.databind.ObjectMapper jackson = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> json = jackson.readValue(resp.body(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
             String tagName = asString(json.get("tag_name"));
             String name = asString(json.get("name"));
             String body = asString(json.get("body"));
             String author = null;
-            if (json.get("author") instanceof Map) author = asString(((Map) json.get("author")).get("login"));
+            Object authorObj = json.get("author");
+            if (authorObj instanceof Map<?,?> authorMap) author = asString(((Map<?,?>) authorMap).get("login"));
 
             List<Mod> result = new ArrayList<>();
-            if (json.get("assets") instanceof List) {
-                List<?> assets = (List<?>) json.get("assets");
+            Object assetsObj = json.get("assets");
+            if (assetsObj instanceof List<?> assets) {
                 for (Object a : assets) {
-                    if (!(a instanceof Map)) continue;
-                    Map asset = (Map) a;
+                    if (!(a instanceof Map<?,?> assetMap)) continue;
+                    Map<?,?> asset = assetMap;
                     String url = asString(asset.get("browser_download_url"));
                     String filename = asString(asset.get("name"));
                     long size = 0L;
