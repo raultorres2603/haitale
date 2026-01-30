@@ -14,6 +14,10 @@ This short guide is for non-technical users and shows only what you need to run 
 
 - Click here to go straight to the latest release and download the JAR: https://github.com/raultorres2603/haitale/releases/latest
 
+**Download the checksum:**
+
+- Verify the JAR you downloaded by comparing its SHA-256 checksum with the one published here: https://github.com/raultorres2603/haitale/releases/latest/download/haitale-latest.jar.sha256
+
 ---
 
 ## 1) Get a free OpenRouter API key (optional but recommended)

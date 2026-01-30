@@ -90,6 +90,36 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute SHA-256 checksum for stable artifact
+        id: checksum
+        run: |
+          # compute checksum of the built JAR and write a .sha256 file
+          # the checksum file will reference the stable asset name haitale-latest.jar
+          set -e
+          JAR_PATH="${{ steps.findjar.outputs.jar }}"
+          if [ ! -f "$JAR_PATH" ]; then
+            echo "Built JAR not found: $JAR_PATH"
+            exit 1
+          fi
+          # compute sha256 (use sha256sum or shasum as fallback)
+          if command -v sha256sum >/dev/null 2>&1; then
+            SHA=$(sha256sum "$JAR_PATH" | awk '{print $1}')
+          else
+            SHA=$(shasum -a 256 "$JAR_PATH" | awk '{print $1}')
+          fi
+          echo "$SHA  haitale-latest.jar" > haitale-latest.jar.sha256
+          echo "checksum_file=haitale-latest.jar.sha256" >> $GITHUB_OUTPUT
+
+      - name: Upload checksum file to Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: haitale-latest.jar.sha256
+          asset_name: haitale-latest.jar.sha256
+          asset_content_type: text/plain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Output release url
         run: |
           echo "Release created: ${{ steps.create_release.outputs.html_url }}"
