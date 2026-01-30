@@ -135,7 +135,8 @@ public class Mod {
                lowerLicense.contains("mpl") ||
                lowerLicense.contains("cc0") ||
                lowerLicense.contains("public domain") ||
-               lowerLicense.contains("unlicense");
+               lowerLicense.contains("unlicense") ||
+               lowerLicense.contains("curseforge"); // CurseForge mods are redistributable per ToS
     }
 
     @Override

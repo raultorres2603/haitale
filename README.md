@@ -6,7 +6,7 @@
 
 [![Verify checksum](https://img.shields.io/badge/verify-checksum-blue?style=flat-square)](https://github.com/raultorres2603/haitale/releases/latest/download/haitale-latest.jar.sha256)
 
-HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods — then you can install the ones you like.
+HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods from CurseForge — then you can install the ones you like.
 
 This short guide is for non-technical users and shows only what you need to run the ready-made JAR downloaded from the project's Releases on GitHub.
 
@@ -22,37 +22,58 @@ This short guide is for non-technical users and shows only what you need to run 
 
 ---
 
-## 1) Get a free OpenRouter API key (optional but recommended)
+## 1) Get API Keys
 
-HaiTale can use a free OpenRouter AI model to provide smarter recommendations. If you want AI-powered suggestions, get a free key (no credit card required):
+### CurseForge API Key (Required)
+
+HaiTale fetches Hytale mods from CurseForge. You need a free API key:
+
+1. Go to https://console.curseforge.com/
+2. Create an account or log in
+3. Navigate to "API Keys" section
+4. Create a new API key
+5. Copy your API key
+
+### OpenRouter API Key (Optional but recommended)
+
+For AI-powered mod recommendations:
 
 1. Go to https://openrouter.ai/ and create an account
 2. Open your API keys page and create/copy a key
 
-If you don't set a key, HaiTale still works using simple keyword matching.
+If you don't set an OpenRouter key, HaiTale still works using simple keyword matching.
 
 ---
 
-## 2) Set your API key locally
+## 2) Set your API keys locally
 
-Set the API key as an environment variable before running the JAR.
+Set the API keys as environment variables before running the JAR.
 
 - macOS / Linux (temporary for current terminal):
 
 ```bash
-export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
+export CURSEFORGE_API_KEY="your-curseforge-key-here"
+export OPENROUTER_API_KEY="sk-or-v1-your-key-here"  # Optional
 ```
 
 - macOS / Linux (persistent for future terminals — add to your ~/.zshrc):
 
 ```bash
-echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.zshrc
+echo 'export CURSEFORGE_API_KEY="your-curseforge-key-here"' >> ~/.zshrc
+echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.zshrc  # Optional
 source ~/.zshrc
 ```
 
-- macOS (make the key available to GUI apps launched from Finder/Dock):
+- Windows (Command Prompt):
 
-Create `~/Library/LaunchAgents/com.haitale.env.plist` with your variable under `EnvironmentVariables`, then load it:
+```cmd
+setx CURSEFORGE_API_KEY "your-curseforge-key-here"
+setx OPENROUTER_API_KEY "sk-or-v1-your-key-here"
+```
+
+- macOS (make the keys available to GUI apps launched from Finder/Dock):
+
+Create `~/Library/LaunchAgents/com.haitale.env.plist` with your variables under `EnvironmentVariables`, then load it:
 
 ```bash
 cat > ~/Library/LaunchAgents/com.haitale.env.plist <<'PLIST'

@@ -2,6 +2,7 @@ package ai.haitale.service;
 
 import ai.haitale.model.Mod;
 import io.micronaut.context.annotation.Value;
+import jakarta.annotation.PostConstruct;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,31 +19,31 @@ public class ModRepositoryService {
 
     private final List<Mod> modCache = new ArrayList<>();
 
-    private final ModrinthClient modrinthClient;
     private final CurseForgeClient curseForgeClient;
     private final GitHubClient gitHubClient;
 
-    @Value("${mod.repository.modrinth.enabled:false}")
+    @Value("${mod.repository.modrinth.enabled}")
     private boolean modrinthEnabled;
 
-    @Value("${mod.repository.curseforge.enabled:false}")
+    @Value("${mod.repository.curseforge.enabled}")
     private boolean curseforgeEnabled;
 
-    @Value("${mod.repository.github.enabled:false}")
+    @Value("${mod.repository.github.enabled}")
     private boolean githubEnabled;
 
     @Value("${mod.repository.github.example-repos:}")
     private String githubExampleReposCsv;
 
     public ModRepositoryService(
-        ModrinthClient modrinthClient,
         CurseForgeClient curseForgeClient,
         GitHubClient gitHubClient
     ) {
-        this.modrinthClient = modrinthClient;
         this.curseForgeClient = curseForgeClient;
         this.gitHubClient = gitHubClient;
+    }
 
+    @PostConstruct
+    public void initialize() {
         // Initialize with some sample mods for demonstration (kept as fallback)
         initializeSampleMods();
 
@@ -51,18 +52,19 @@ public class ModRepositoryService {
     }
 
     private void initializeSampleMods() {
-        // Sample mods for demonstration
+        // Sample mods for demonstration - these use placeholder URLs and should only be used
+        // when real repository integration is not available
         modCache.add(new Mod(
             "enhanced-building-1",
             "Enhanced Building Tools",
             "1.0.0",
             "Adds advanced building tools, templates, and blueprints for complex structures",
-            "https://example.com/mods/enhanced-building-1.0.0.jar",
+            "", // Empty URL indicates this is a sample mod
             "abc123def456",
             "SHA-256",
             "MIT",
             "BuilderPro",
-            "modrinth",
+            "sample",
             2048000
         ));
 
@@ -71,12 +73,12 @@ public class ModRepositoryService {
             "Magic Realms",
             "2.1.0",
             "Introduces magical spells, enchantments, and mystical creatures to your world",
-            "https://example.com/mods/magic-realms-2.1.0.jar",
+            "", // Empty URL indicates this is a sample mod
             "def456ghi789",
             "SHA-256",
             "Apache-2.0",
             "MysticCoder",
-            "curseforge",
+            "sample",
             3145728
         ));
 
@@ -85,12 +87,12 @@ public class ModRepositoryService {
             "Tech Revolution",
             "1.5.2",
             "Adds machinery, automation, and technological advancement systems",
-            "https://example.com/mods/tech-revolution-1.5.2.jar",
+            "", // Empty URL indicates this is a sample mod
             "ghi789jkl012",
             "SHA-256",
             "GPL-3.0",
             "TechWizard",
-            "modrinth",
+            "sample",
             4194304
         ));
 
@@ -99,12 +101,12 @@ public class ModRepositoryService {
             "Adventure Quest Pack",
             "3.0.0",
             "Hundreds of quests, dungeons, and adventures with dynamic storytelling",
-            "https://example.com/mods/adventure-quests-3.0.0.jar",
+            "", // Empty URL indicates this is a sample mod
             "jkl012mno345",
             "SHA-256",
             "MIT",
             "QuestMaster",
-            "curseforge",
+            "sample",
             5242880
         ));
 
@@ -113,12 +115,12 @@ public class ModRepositoryService {
             "Medieval Immersion",
             "1.2.3",
             "Medieval castles, knights, siege weapons, and historical immersion",
-            "https://example.com/mods/medieval-pack-1.2.3.jar",
+            "", // Empty URL indicates this is a sample mod
             "mno345pqr678",
             "SHA-256",
             "LGPL-2.1",
             "HistoryBuff",
-            "github",
+            "sample",
             2621440
         ));
 
@@ -127,16 +129,16 @@ public class ModRepositoryService {
             "Fantasy Creatures Expansion",
             "2.0.1",
             "Dragons, griffins, unicorns and other mythical creatures",
-            "https://example.com/mods/fantasy-creatures-2.0.1.jar",
+            "", // Empty URL indicates this is a sample mod
             "pqr678stu901",
             "SHA-256",
             "BSD-3-Clause",
             "CreatureDesigner",
-            "modrinth",
+            "sample",
             3670016
         ));
 
-        LOG.info("Initialized mod cache with {} mods", modCache.size());
+        LOG.info("Initialized mod cache with {} sample mods", modCache.size());
     }
 
     /**
@@ -192,27 +194,15 @@ public class ModRepositoryService {
      */
     public void refreshModCache() {
         LOG.info("Refreshing mod cache from repositories...");
+        LOG.info("Repository status - Modrinth: {}, CurseForge: {}, GitHub: {}",
+            modrinthEnabled, curseforgeEnabled, githubEnabled);
 
         Set<String> seen = new HashSet<>();
         // Keep existing sample mods as fallback
         List<Mod> newCache = new ArrayList<>();
 
-        // Try Modrinth
-        if (modrinthEnabled && modrinthClient != null) {
-            try {
-                LOG.info("Fetching mods from Modrinth...");
-                List<Mod> fromModrinth = modrinthClient.search("", 50); // get recent/popular
-                for (Mod m : fromModrinth) {
-                    if (m.getId() == null) continue;
-                    if (seen.add(m.getId())) newCache.add(m);
-                }
-                LOG.info("Imported {} mods from Modrinth", fromModrinth.size());
-            } catch (Exception e) {
-                LOG.warn("Failed to fetch from Modrinth: {}", e.getMessage());
-            }
-        }
-
         // Try CurseForge
+        LOG.debug("Checking CurseForge: enabled={}, client={}", curseforgeEnabled, curseForgeClient != null);
         if (curseforgeEnabled && curseForgeClient != null) {
             try {
                 LOG.info("Fetching mods from CurseForge...");
@@ -223,8 +213,11 @@ public class ModRepositoryService {
                 }
                 LOG.info("Imported {} mods from CurseForge", fromCurse.size());
             } catch (Exception e) {
-                LOG.warn("Failed to fetch from CurseForge: {}", e.getMessage());
+                LOG.warn("Failed to fetch from CurseForge: {}", e.getMessage(), e);
             }
+        } else {
+            LOG.warn("CurseForge integration disabled or client not available (enabled={}, client={})",
+                curseforgeEnabled, curseForgeClient != null);
         }
 
         // Try GitHub - this is best-effort and requires repository identifiers to be known
@@ -248,9 +241,14 @@ public class ModRepositoryService {
             }
         }
 
-        // Merge: keep sample mods not duplicated
-        for (Mod m : new ArrayList<>(modCache)) {
-            if (seen.add(m.getId())) newCache.add(m);
+        // Only keep sample mods if no real mods were fetched
+        if (newCache.isEmpty()) {
+            LOG.info("No mods fetched from repositories, keeping sample mods");
+            for (Mod m : new ArrayList<>(modCache)) {
+                if (seen.add(m.getId())) newCache.add(m);
+            }
+        } else {
+            LOG.info("Real mods fetched, removing sample mods from cache");
         }
 
         modCache.clear();

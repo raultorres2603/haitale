@@ -48,6 +48,10 @@ public class ModDownloadService {
 
         // Validate download URL
         if (mod.getDownloadUrl() == null || mod.getDownloadUrl().isEmpty()) {
+            if ("sample".equals(mod.getSource())) {
+                throw new IOException("Cannot download sample mod '" + mod.getName() + "'. " +
+                    "This is a demonstration mod. Please search for real mods using 'haitale search' or enable Modrinth integration.");
+            }
             throw new IOException("Download URL is empty for mod: " + mod.getName());
         }
 
