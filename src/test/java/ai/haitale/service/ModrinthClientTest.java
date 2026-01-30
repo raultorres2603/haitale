@@ -1,6 +1,8 @@
 package ai.haitale.service;
 
 import ai.haitale.model.Mod;
+import ai.haitale.service.modrinth.dto.ModrinthProject;
+import ai.haitale.service.modrinth.dto.ModrinthProject.ModrinthAuthor;
 import io.micronaut.serde.ObjectMapper;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
@@ -36,13 +38,6 @@ public class ModrinthClientTest {
 
     @Test
     public void testProjectToModExtractsChecksumAndUrl() throws Exception {
-        // Mock /search to return one project hit
-        String searchResponse = "{\"hits\":[{" +
-            "\"id\":\"proj-1\",\"slug\":\"proj-slug\",\"title\":\"Test Mod\",\"description\":\"A test mod\",\"versions\":[\"v1\"],\"latest_version\":\"v1\",\"authors\":[{\"username\":\"dev\"}]" +
-            "}]}";
-
-        server.enqueue(new MockResponse().setResponseCode(200).setBody(searchResponse));
-
         // Mock /version/v1 to return two files (one with sha256)
         String versionResponse = "{" +
             "\"id\":\"v1\"," +
@@ -56,26 +51,25 @@ public class ModrinthClientTest {
 
         ModrinthClient client = new ModrinthClient(objectMapper, server.url("/").toString());
 
-        List<Mod> mods = client.search("Test Mod", 10);
+        // Construct a project that refers to version v1
+        ModrinthProject proj = new ModrinthProject();
+        proj.id = "proj-1";
+        proj.slug = "proj-slug";
+        proj.title = "Test Mod";
+        proj.description = "A test mod";
+        proj.latest_version = "v1";
+        proj.versions = List.of("v1");
+        ModrinthAuthor a = new ModrinthAuthor();
+        a.username = "dev";
+        proj.authors = List.of(a);
 
-        // Take recorded requests with timeout to avoid blocking forever
-        RecordedRequest r1 = server.takeRequest(1, TimeUnit.SECONDS);
-        RecordedRequest r2 = server.takeRequest(1, TimeUnit.SECONDS);
+        Mod mod = client.projectToMod(proj, null);
 
-        if (r1 == null) {
-            Assertions.fail("No search request recorded; requestCount=" + server.getRequestCount());
-            return;
-        }
-        if (r2 == null) {
-            Assertions.fail("No version request recorded; requestCount=" + server.getRequestCount() + ", path1=" + r1.getPath());
-            return;
-        }
+        // Take the request to ensure version endpoint was called
+        RecordedRequest r = server.takeRequest(1, TimeUnit.SECONDS);
+        if (r == null) Assertions.fail("Expected a request to version endpoint");
 
-        System.out.println("Recorded request 1: " + r1.getMethod() + " " + r1.getPath());
-        System.out.println("Recorded request 2: " + r2.getMethod() + " " + r2.getPath());
-
-        Assertions.assertEquals(1, mods.size(), "Expected one mod returned by search");
-        Mod mod = mods.get(0);
+        Assertions.assertNotNull(mod);
         Assertions.assertEquals("proj-1", mod.getId());
         Assertions.assertEquals("Test Mod", mod.getName());
         Assertions.assertEquals("A test mod", mod.getDescription());

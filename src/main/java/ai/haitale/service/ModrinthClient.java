@@ -115,7 +115,17 @@ public class ModrinthClient {
                 HttpRequest vReq = HttpRequest.newBuilder().uri(URI.create(verUri)).timeout(TIMEOUT).GET().build();
                 HttpResponse<String> vResp = httpClient.send(vReq, HttpResponse.BodyHandlers.ofString());
                 if (vResp.statusCode() == 200) {
-                    version = objectMapper.readValue(vResp.body().getBytes(StandardCharsets.UTF_8), ModrinthVersion.class);
+                    System.out.println("[ModrinthClient] fetched version response body: " + vResp.body());
+                    // Always use robust map-based parser to ensure files are extracted
+                    ModrinthVersion parsed = parseVersionFromJson(vResp.body());
+                    if (parsed != null && parsed.files != null && !parsed.files.isEmpty()) {
+                        version = parsed;
+                        System.out.println("[ModrinthClient] parseVersionFromJson produced files=" + parsed.files.size());
+                    } else {
+                        System.out.println("[ModrinthClient] parseVersionFromJson produced no files");
+                    }
+                } else {
+                    LOG.warn("Unexpected HTTP status fetching version {}: {}", versionId, vResp.statusCode());
                 }
             } catch (Exception e) {
                 LOG.debug("Failed to fetch Modrinth version {}: {}", versionId, e.getMessage());
@@ -181,5 +191,44 @@ public class ModrinthClient {
         );
 
         return mod;
+    }
+
+    private ModrinthVersion parseVersionFromJson(String json) {
+        System.out.println("[ModrinthClient] parseVersionFromJson input json=" + json);
+        try {
+            Map verJson = objectMapper.readValue(json.getBytes(StandardCharsets.UTF_8), Map.class);
+            ModrinthVersion tmp = new ModrinthVersion();
+            Object verNum = verJson.get("version_number");
+            tmp.version_number = verNum != null ? String.valueOf(verNum) : null;
+
+            Object filesObj = verJson.get("files");
+            if (filesObj instanceof List) {
+                List<?> filesList = (List<?>) filesObj;
+                List<ModrinthVersion.ModrinthFile> fList = new ArrayList<>();
+                for (Object fo : filesList) {
+                    if (!(fo instanceof Map)) continue;
+                    Map fmap = (Map) fo;
+                    ModrinthVersion.ModrinthFile mf = new ModrinthVersion.ModrinthFile();
+                    mf.url = fmap.get("url") != null ? String.valueOf(fmap.get("url")) : null;
+                    Object sizeObj = fmap.get("size");
+                    if (sizeObj instanceof Number) mf.size = ((Number) sizeObj).longValue();
+                    Object hashesObj = fmap.get("hashes");
+                    if (hashesObj instanceof Map) {
+                        try {
+                            mf.hashes = (Map<String,String>) hashesObj;
+                        } catch (Exception ignore) {
+                            // best-effort
+                        }
+                    }
+                    mf.filename = fmap.get("filename") != null ? String.valueOf(fmap.get("filename")) : null;
+                    fList.add(mf);
+                }
+                tmp.files = fList;
+            }
+            return tmp;
+        } catch (Exception e) {
+            LOG.debug("parseVersionFromJson failed: {}", e.getMessage());
+            return null;
+        }
     }
 }
