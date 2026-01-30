@@ -21,12 +21,6 @@ public class ModRepositoryService {
 
      private final GitHubClient gitHubClient;
 
-    @Value("${mod.repository.modrinth.enabled}")
-    private boolean modrinthEnabled;
-
-    @Value("${mod.repository.curseforge.enabled}")
-    private boolean curseforgeEnabled;
-
     @Value("${mod.repository.github.enabled}")
     private boolean githubEnabled;
 
@@ -191,8 +185,8 @@ public class ModRepositoryService {
      */
     public void refreshModCache() {
         LOG.info("Refreshing mod cache from repositories...");
-        LOG.info("Repository status - Modrinth: {}, CurseForge: {}, GitHub: {}",
-            modrinthEnabled, curseforgeEnabled, githubEnabled);
+        LOG.info("Repository status - GitHub: {}",
+            githubEnabled);
 
         Set<String> seen = new HashSet<>();
         // Keep existing sample mods as fallback
