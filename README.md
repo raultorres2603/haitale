@@ -4,6 +4,8 @@
 
 [![Download latest JAR](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/raultorres2603/haitale/releases/latest/download/haitale-latest.jar)
 
+[![Verify checksum](https://img.shields.io/badge/verify-checksum-blue?style=flat-square)](https://github.com/raultorres2603/haitale/releases/latest/download/haitale-latest.jar.sha256)
+
 HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods — then you can install the ones you like.
 
 This short guide is for non-technical users and shows only what you need to run the ready-made JAR downloaded from the project's Releases on GitHub.
