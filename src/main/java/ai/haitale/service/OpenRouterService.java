@@ -206,10 +206,28 @@ public class OpenRouterService {
                 return null;
 
             } catch (Exception e) {
-                // network/other client error - retry with backoff
-                LOG.warn("Error calling OpenRouter API on attempt {}/{}: {}", attempt, maxAttempts, e.getMessage());
+                // Check if it's a timeout error
+                String errorMsg = e.getMessage() != null ? e.getMessage() : "";
+                boolean isTimeout = errorMsg.contains("Read Timeout") ||
+                                   errorMsg.contains("timeout") ||
+                                   e.getClass().getSimpleName().contains("Timeout");
+
+                if (isTimeout) {
+                    LOG.warn("Timeout calling OpenRouter API on attempt {}/{}: Model '{}' is taking too long to respond. " +
+                             "Consider using a faster model or increasing micronaut.http.client.read-timeout in application.properties",
+                             attempt, maxAttempts, model);
+                } else {
+                    LOG.warn("Error calling OpenRouter API on attempt {}/{}: {}", attempt, maxAttempts, e.getMessage());
+                }
+
                 if (attempt == maxAttempts) {
-                    LOG.error("Exhausted retries calling OpenRouter API: {}", e.getMessage(), e);
+                    if (isTimeout) {
+                        LOG.error("Exhausted retries due to timeouts. Model '{}' may be too slow or overloaded. " +
+                                 "Try a faster model (e.g., meta-llama/llama-3.2-3b-instruct:free) or increase timeout settings. " +
+                                 "Falling back to rule-based recommendations.", model);
+                    } else {
+                        LOG.error("Exhausted retries calling OpenRouter API: {}", e.getMessage(), e);
+                    }
                     return null;
                 }
                 sleep(backoffMillis + jitterMillis(backoffMillis));
