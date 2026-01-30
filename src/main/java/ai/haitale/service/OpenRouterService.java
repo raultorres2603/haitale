@@ -1,9 +1,7 @@
 package ai.haitale.service;
 
 import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import io.micronaut.context.annotation.Property;
-import io.micronaut.core.annotation.Nullable;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
@@ -21,7 +19,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
 import java.util.StringJoiner;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Singleton
@@ -29,11 +26,21 @@ public class OpenRouterService {
     private static final Logger LOG = LoggerFactory.getLogger(OpenRouterService.class);
 
     private final HttpClient httpClient;
-    private final String apiKey;
-    private final String apiUrl;
-    private final String model;
-    private final String siteUrl;
-    private final String siteName;
+
+    @Value("${openrouter.api.key:}")
+    private String apiKey;
+
+    @Value("${openrouter.api.url:}")
+    private String apiUrl;
+
+    @Value("${openrouter.model:}")
+    private String model;
+
+    @Value("${openrouter.site.url:}")
+    private String siteUrl;
+
+    @Value("${openrouter.site.name:}")
+    private String siteName;
 
     // Retry/cache configuration
     private final int maxAttempts;
@@ -43,8 +50,7 @@ public class OpenRouterService {
 
     // Caffeine cache
     private final boolean cacheEnabled;
-    private final long cacheTtlMs;
-    private final int cacheMaxEntries;
+    // cacheTtlMs and cacheMaxEntries are used only during construction; keep as locals there
     private final Cache<String, String> caffeineCache;
 
     // Circuit breaker
@@ -55,51 +61,33 @@ public class OpenRouterService {
     private volatile long circuitOpenedAt = 0L; // timestamp when circuit opened
 
     public OpenRouterService(
-        @Client("https://openrouter.ai") HttpClient httpClient,
-        @Property(name = "openrouter.api.key") @Nullable String apiKey,
-        @Property(name = "openrouter.api.url") String apiUrl,
-        @Property(name = "openrouter.model") String model,
-        @Property(name = "openrouter.site.url") String siteUrl,
-        @Property(name = "openrouter.site.name") String siteName,
-        @Property(name = "openrouter.retry.maxAttempts") int maxAttempts,
-        @Property(name = "openrouter.retry.initialBackoffMs") long initialBackoffMs,
-        @Property(name = "openrouter.retry.maxBackoffMs") long maxBackoffMs,
-        @Property(name = "openrouter.retry.jitterFraction") double jitterFraction,
-        @Property(name = "openrouter.cache.enabled") boolean cacheEnabled,
-        @Property(name = "openrouter.cache.ttlSeconds") long cacheTtlSeconds,
-        @Property(name = "openrouter.cache.maxEntries") int cacheMaxEntries,
-        @Property(name = "openrouter.circuit.enabled") boolean circuitEnabled,
-        @Property(name = "openrouter.circuit.failureThreshold") int circuitFailureThreshold,
-        @Property(name = "openrouter.circuit.resetTimeoutSeconds") long circuitResetTimeoutSeconds
+            @Client("https://openrouter.ai") HttpClient httpClient,
+            @Value("${openrouter.retry.maxAttempts:4}") int maxAttempts,
+            @Value("${openrouter.retry.initialBackoffMs:1000}") long initialBackoffMs,
+            @Value("${openrouter.retry.maxBackoffMs:60000}") long maxBackoffMs,
+            @Value("${openrouter.retry.jitterFraction:0.2}") double jitterFraction,
+            @Value("${openrouter.cache.enabled:true}") boolean cacheEnabled,
+            @Value("${openrouter.cache.ttlSeconds:300}") int cacheTtlSeconds,
+            @Value("${openrouter.cache.maxEntries:128}") int cacheMaxEntries,
+            @Value("${openrouter.circuit.enabled:true}") boolean circuitEnabled,
+            @Value("${openrouter.circuit.failureThreshold:5}") int circuitFailureThreshold,
+            @Value("${openrouter.circuit.resetTimeoutSeconds:60}") long circuitResetTimeoutSeconds
     ) {
         this.httpClient = httpClient;
-        this.apiKey = apiKey;
-        this.apiUrl = apiUrl;
-        this.model = model;
-        this.siteUrl = siteUrl;
-        this.siteName = siteName;
-
-        this.maxAttempts = Math.max(1, maxAttempts);
-        this.initialBackoffMs = Math.max(100L, initialBackoffMs);
-        this.maxBackoffMs = Math.max(this.initialBackoffMs, maxBackoffMs);
-        this.jitterFraction = Math.max(0.0, Math.min(1.0, jitterFraction));
-
+        this.maxAttempts = maxAttempts;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
+        this.jitterFraction = jitterFraction;
         this.cacheEnabled = cacheEnabled;
-        this.cacheTtlMs = Math.max(0L, cacheTtlSeconds) * 1000L;
-        this.cacheMaxEntries = Math.max(1, cacheMaxEntries);
-
+        this.caffeineCache = cacheEnabled
+            ? com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                .expireAfterWrite(java.time.Duration.ofSeconds(cacheTtlSeconds))
+                .maximumSize(cacheMaxEntries)
+                .build()
+            : null;
         this.circuitEnabled = circuitEnabled;
-        this.circuitFailureThreshold = Math.max(1, circuitFailureThreshold);
-        this.circuitResetTimeoutMs = Math.max(1L, circuitResetTimeoutSeconds) * 1000L;
-
-        if (cacheEnabled) {
-            this.caffeineCache = Caffeine.newBuilder()
-                .expireAfterWrite(this.cacheTtlMs, TimeUnit.MILLISECONDS)
-                .maximumSize(this.cacheMaxEntries)
-                .build();
-        } else {
-            this.caffeineCache = null;
-        }
+        this.circuitFailureThreshold = circuitFailureThreshold;
+        this.circuitResetTimeoutMs = circuitResetTimeoutSeconds * 1000L;
     }
 
     /**
@@ -118,7 +106,7 @@ public class OpenRouterService {
         }
 
         String cacheKey = buildCacheKey(worldDescription, availableModsList, model);
-        if (cacheEnabled) {
+        if (cacheEnabled && caffeineCache != null) {
             String cached = caffeineCache.getIfPresent(cacheKey);
             if (cached != null) {
                 LOG.info("OpenRouter cache hit for key (len {}), returning cached response", cacheKey.length());
@@ -145,7 +133,8 @@ public class OpenRouterService {
             .header("X-Title", siteName)
             .header("Content-Type", "application/json");
 
-        LOG.info("Calling OpenRouter API with model: {}", model);
+        LOG.info("Calling OpenRouter API with model: {} (max retries: {}, initial backoff: {}ms, max backoff: {}ms)",
+                 model, maxAttempts, initialBackoffMs, maxBackoffMs);
 
         // Use a robust retry strategy for transient errors like 429
         OpenRouterResponse response = sendWithRetries(httpRequest, maxAttempts);
@@ -159,9 +148,9 @@ public class OpenRouterService {
         recordSuccess();
 
         if (response.choices != null && !response.choices.isEmpty()) {
-            String content = response.choices.get(0).message.content;
+            String content = response.choices.stream().findFirst().map(c -> c.message.content).orElse(null);
             LOG.info("Received AI response ({} tokens)", response.usage != null ? response.usage.totalTokens : "unknown");
-            if (cacheEnabled && content != null) caffeineCache.put(cacheKey, content);
+            if (cacheEnabled && caffeineCache != null && content != null) caffeineCache.put(cacheKey, content);
             return content;
         }
 
@@ -184,8 +173,14 @@ public class OpenRouterService {
                 if (status == HttpStatus.TOO_MANY_REQUESTS) {
                     String retryAfter = resp.getHeaders().get("Retry-After");
                     long waitMillis = computeRetryAfterMillis(retryAfter, backoffMillis);
-                    LOG.warn("Received 429 Too Many Requests (attempt {}/{}). Retrying after {} ms", attempt, maxAttempts, waitMillis);
-                    sleep(waitMillis + jitterMillis(waitMillis));
+                    long jitter = jitterMillis(waitMillis);
+                    long totalWait = waitMillis + jitter;
+                    LOG.warn("Rate limited by OpenRouter API (429 Too Many Requests) on attempt {}/{}. " +
+                             "Waiting {} ms (base: {} ms, jitter: {} ms) before retry. " +
+                             "Retry-After header: {}",
+                             attempt, maxAttempts, totalWait, waitMillis, jitter,
+                             retryAfter != null ? retryAfter : "not provided");
+                    sleep(totalWait);
                     backoffMillis = Math.min(backoffMillis * 2, maxBackoffMs);
                     continue;
                 }
@@ -318,6 +313,7 @@ public class OpenRouterService {
     }
 
     @Serdeable
+    @SuppressWarnings("unused")
     public static class AIRecommendation {
         private String modId;
         private double relevanceScore;
