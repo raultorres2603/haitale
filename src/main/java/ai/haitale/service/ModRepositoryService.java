@@ -1,12 +1,15 @@
 package ai.haitale.service;
 
 import ai.haitale.model.Mod;
+import io.micronaut.context.annotation.Property;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Singleton
@@ -15,10 +18,34 @@ public class ModRepositoryService {
 
     private final List<Mod> modCache = new ArrayList<>();
 
-    public ModRepositoryService() {
-        // Initialize with some sample mods for demonstration
-        // In production, this would fetch from real APIs
+    private final ModrinthClient modrinthClient;
+    private final CurseForgeClient curseForgeClient;
+    private final GitHubClient gitHubClient;
+
+    private final boolean modrinthEnabled;
+    private final boolean curseforgeEnabled;
+    private final boolean githubEnabled;
+
+    public ModRepositoryService(
+        ModrinthClient modrinthClient,
+        CurseForgeClient curseForgeClient,
+        GitHubClient gitHubClient,
+        @Property(name = "mod.repository.modrinth.enabled") boolean modrinthEnabled,
+        @Property(name = "mod.repository.curseforge.enabled") boolean curseforgeEnabled,
+        @Property(name = "mod.repository.github.enabled") boolean githubEnabled
+    ) {
+        this.modrinthClient = modrinthClient;
+        this.curseForgeClient = curseForgeClient;
+        this.gitHubClient = gitHubClient;
+        this.modrinthEnabled = modrinthEnabled;
+        this.curseforgeEnabled = curseforgeEnabled;
+        this.githubEnabled = githubEnabled;
+
+        // Initialize with some sample mods for demonstration (kept as fallback)
         initializeSampleMods();
+
+        // Attempt to refresh cache from remote repositories on startup
+        refreshModCache();
     }
 
     private void initializeSampleMods() {
@@ -160,11 +187,71 @@ public class ModRepositoryService {
 
     /**
      * Refresh mod cache from remote repositories
-     * In production, this would call actual APIs
      */
     public void refreshModCache() {
         LOG.info("Refreshing mod cache from repositories...");
-        // TODO: Implement API calls to Modrinth, CurseForge, etc.
+
+        Set<String> seen = new HashSet<>();
+        // Keep existing sample mods as fallback
+        List<Mod> newCache = new ArrayList<>();
+
+        // Try Modrinth
+        if (modrinthEnabled && modrinthClient != null) {
+            try {
+                LOG.info("Fetching mods from Modrinth...");
+                List<Mod> fromModrinth = modrinthClient.search("", 50); // get recent/popular
+                for (Mod m : fromModrinth) {
+                    if (m.getId() == null) continue;
+                    if (seen.add(m.getId())) newCache.add(m);
+                }
+                LOG.info("Imported {} mods from Modrinth", fromModrinth.size());
+            } catch (Exception e) {
+                LOG.warn("Failed to fetch from Modrinth: {}", e.getMessage());
+            }
+        }
+
+        // Try CurseForge
+        if (curseforgeEnabled && curseForgeClient != null) {
+            try {
+                LOG.info("Fetching mods from CurseForge...");
+                List<Mod> fromCurse = curseForgeClient.search("", 50);
+                for (Mod m : fromCurse) {
+                    if (m.getId() == null) continue;
+                    if (seen.add(m.getId())) newCache.add(m);
+                }
+                LOG.info("Imported {} mods from CurseForge", fromCurse.size());
+            } catch (Exception e) {
+                LOG.warn("Failed to fetch from CurseForge: {}", e.getMessage());
+            }
+        }
+
+        // Try GitHub - this is best-effort and requires repository identifiers to be known
+        if (githubEnabled && gitHubClient != null) {
+            try {
+                LOG.info("Fetching some releases from GitHub (example repos)...");
+                // Example repos can be configured later; for now we won't hardcode many
+                List<String> exampleRepos = List.of();
+                for (String repo : exampleRepos) {
+                    List<Mod> fromGit = gitHubClient.fetchLatestRelease(repo);
+                    for (Mod m : fromGit) {
+                        if (m.getId() == null) continue;
+                        if (seen.add(m.getId())) newCache.add(m);
+                    }
+                }
+                LOG.info("Imported {} mods from GitHub", newCache.size());
+            } catch (Exception e) {
+                LOG.warn("Failed to fetch from GitHub: {}", e.getMessage());
+            }
+        }
+
+        // Merge: keep sample mods not duplicated
+        for (Mod m : new ArrayList<>(modCache)) {
+            if (seen.add(m.getId())) newCache.add(m);
+        }
+
+        modCache.clear();
+        modCache.addAll(newCache);
+
         LOG.info("Mod cache refresh complete. Total mods: {}", modCache.size());
     }
 }
