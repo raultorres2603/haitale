@@ -14,6 +14,7 @@ public class ModrinthProject {
     public List<String> versions;
     public String latest_version;
     public List<ModrinthAuthor> authors;
+    public String license;
 
     @Serdeable
     public static class ModrinthAuthor {

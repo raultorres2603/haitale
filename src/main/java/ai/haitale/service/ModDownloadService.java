@@ -44,6 +44,12 @@ public class ModDownloadService {
         }
 
         LOG.info("Downloading mod: {} v{}", mod.getName(), mod.getVersion());
+        LOG.debug("Download URL: {}", mod.getDownloadUrl());
+
+        // Validate download URL
+        if (mod.getDownloadUrl() == null || mod.getDownloadUrl().isEmpty()) {
+            throw new IOException("Download URL is empty for mod: " + mod.getName());
+        }
 
         // Create download directory if it doesn't exist
         Files.createDirectories(downloadDir);
@@ -63,7 +69,9 @@ public class ModDownloadService {
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
             if (response.statusCode() != 200) {
-                throw new IOException("Failed to download mod: HTTP " + response.statusCode());
+                String errorMsg = String.format("Failed to download mod from %s: HTTP %d", mod.getDownloadUrl(), response.statusCode());
+                LOG.error(errorMsg);
+                throw new IOException(errorMsg);
             }
 
             // Save to file with progress

@@ -276,7 +276,7 @@ public class ModrinthClient {
             file.url != null ? file.url : "",
             checksumValue != null ? checksumValue : "",
             checksumAlg != null ? checksumAlg : "",
-            "",
+            project.license != null ? project.license : "",
             author != null ? author : "",
             "modrinth",
             file.size
