@@ -50,13 +50,78 @@ echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-- Windows (PowerShell temporary):
+- macOS (make the key available to GUI apps launched from Finder/Dock):
 
-```powershell
-$env:OPENROUTER_API_KEY = "sk-or-v1-your-key-here"
+Create `~/Library/LaunchAgents/com.haitale.env.plist` with your variable under `EnvironmentVariables`, then load it:
+
+```bash
+cat > ~/Library/LaunchAgents/com.haitale.env.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.haitale.env</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>OPENROUTER_API_KEY</key>
+      <string>sk-or-v1-your-key-here</string>
+    </dict>
+  </dict>
+</plist>
+PLIST
+
+# Load it
+launchctl unload ~/Library/LaunchAgents/com.haitale.env.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/com.haitale.env.plist
 ```
 
-Important: Do not commit or share your API key. If it was accidentally shared, revoke/rotate it at OpenRouter immediately.
+- Linux (persistent for future terminals): add to your shell profile (`~/.bashrc`, `~/.profile`, or `~/.bash_profile` depending on distro):
+
+```bash
+echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.bashrc
+# then reload
+source ~/.bashrc
+```
+
+- Windows (PowerShell persistent for current user):
+
+```powershell
+setx OPENROUTER_API_KEY "sk-or-v1-your-key-here"
+# restart PowerShell/Terminal to pick it up
+```
+
+- Windows (PowerShell profile):
+
+```powershell
+Add-Content -Path $PROFILE -Value 'setx OPENROUTER_API_KEY "sk-or-v1-your-key-here"'
+```
+
+Alternatives and secure options
+
+- Use a local `.env` file (convenient for per-project use): create a `.env` file in your project and add it to `.gitignore`:
+
+```
+# .env
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+```
+
+Then load it before running the JAR (example using `direnv` or a small shell helper script). Make sure `.env` is in `.gitignore`.
+
+- macOS Keychain (recommended for more security): store and retrieve the key using the `security` CLI and a small wrapper script so the key is not left in plain text files.
+
+```bash
+# store (one-time)
+security add-generic-password -a "$USER" -s "openrouter-api" -w "sk-or-v1-your-key-here"
+# retrieve (in a script)
+OPENROUTER_API_KEY=$(security find-generic-password -a "$USER" -s "openrouter-api" -w)
+export OPENROUTER_API_KEY
+```
+
+Important security notes
+
+- Never commit your API key to Git. If you accidentally commit it, rotate/revoke it immediately at OpenRouter and remove it from git history.
+- Prefer environment variables, Keychain, or a secrets manager for production use rather than storing the key inside files in the repository.
 
 ---
 
