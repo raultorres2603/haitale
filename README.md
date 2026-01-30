@@ -1,8 +1,18 @@
 # HaiTale — AI-Powered Mod Helper for HyTale
 
+[![Latest Release](https://img.shields.io/github/v/release/raultorres2603/haitale?style=flat-square)](https://github.com/raultorres2603/haitale/releases/latest)
+
+[![Download latest JAR](https://img.shields.io/badge/download-latest-brightgreen?style=flat-square)](https://github.com/raultorres2603/haitale/releases/latest/download/haitale-latest.jar)
+
 HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods — then you can install the ones you like.
 
 This short guide is for non-technical users and shows only what you need to run the ready-made JAR downloaded from the project's Releases on GitHub.
+
+---
+
+**Download the latest JAR:**
+
+- Click here to go straight to the latest release and download the JAR: https://github.com/raultorres2603/haitale/releases/latest
 
 ---
 
@@ -55,7 +65,7 @@ We build and publish a ready-to-run JAR automatically whenever code is pushed to
 - Where to download:
   1. Open the project on GitHub: https://github.com/raultorres2603/haitale
   2. Click the **Releases** tab
-  3. Download the latest `haitale-<commit-sha>.jar`
+  3. Download the latest `haitale-<commit-sha>.jar` or click the badge above to download the latest stable JAR (`haitale-latest.jar`).
 
 This means a new JAR is produced on every push to `master` (or when manually triggered). If you want to publish only on version bumps instead, tell me and I can change the process to build only on tags.
 
