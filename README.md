@@ -1,240 +1,106 @@
-# HaiTale - AI-Powered HyTale Mod Installer
+# HaiTale — AI-Powered Mod Helper for HyTale
 
-HaiTale is an intelligent command-line tool that uses AI to recommend and install HyTale mods based on natural language descriptions. Simply describe the world you want to create, and HaiTale will suggest the best mods to match your vision.
+HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods — then you can install the ones you like.
 
-## Features
+This short guide is for non-technical users and shows only what you need to run the ready-made JAR downloaded from the project's Releases on GitHub.
 
-- **🤖 AI-Powered Recommendations**: Uses OpenRouter with free AI models (LLaMA, Gemini, etc.) for intelligent mod suggestions
-- **🔒 Security First**: 
-  - Only installs mods with free/open-source licenses
-  - Verifies SHA-256 checksums for every download
-  - Prevents malware and tampered files
-- **⚡ Easy Installation**: One command to install multiple mods
-- **💾 Automatic Backups**: Creates backups before modifying your mods directory
-- **📋 Installation Tracking**: Maintains a manifest of installed mods with metadata
-- **🎯 Fallback Mode**: Works without API key using keyword-based matching
+---
 
-## Quick Start
+## 1) Get a free OpenRouter API key (optional but recommended)
 
-### Prerequisites
-- Java 21 or higher
-- OpenRouter API key (free) - [Get yours here](https://openrouter.ai/keys)
+HaiTale can use a free OpenRouter AI model to provide smarter recommendations. If you want AI-powered suggestions, get a free key (no credit card required):
 
-### Setup
+1. Go to https://openrouter.ai/ and create an account
+2. Open your API keys page and create/copy a key
 
-1. **Clone and build:**
-```bash
-git clone <repository-url>
-cd HaiTale
-./gradlew build
-```
+If you don't set a key, HaiTale still works using simple keyword matching.
 
-2. **Set your OpenRouter API key:**
+---
+
+## 2) Set your API key locally
+
+Set the API key as an environment variable before running the JAR.
+
+- macOS / Linux (temporary for current terminal):
+
 ```bash
 export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
 ```
 
-📚 **Detailed setup instructions:** See [SETUP.md](SETUP.md)
-
-### First Command
+- macOS / Linux (persistent for future terminals — add to your ~/.zshrc):
 
 ```bash
-./gradlew run --args="recommend I want a magical fantasy world with dragons and epic quests"
+echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-## Usage
+- Windows (PowerShell temporary):
 
-### Get Mod Recommendations
-
-Describe the world you want to create, and HaiTale will recommend suitable mods:
-
-```bash
-# Basic recommendation
-haitale recommend I want a medieval fantasy world with magic and dragons
-
-# Building-focused world
-haitale recommend A creative world with advanced building tools and blueprints
-
-# Tech-focused world
-haitale recommend A futuristic world with automation and machinery
+```powershell
+$env:OPENROUTER_API_KEY = "sk-or-v1-your-key-here"
 ```
 
-### Install Mods
-
-Install one or more mods using their IDs (found in search or recommend results):
-
-```bash
-# Install a single mod
-haitale install enhanced-building-1
-
-# Install multiple mods
-haitale install magic-realms-2 fantasy-creatures-6
-
-# Skip confirmation prompt
-haitale install -y tech-revolution-3
-```
-
-### Search for Mods
-
-Search for mods by keyword:
-
-```bash
-haitale search magic
-haitale search building tools
-haitale search adventure
-```
-
-### List Installed Mods
-
-View all currently installed mods:
-
-```bash
-haitale list
-```
-
-## How It Works
-
-### AI Recommendation Engine
-
-HaiTale uses **OpenRouter** to access powerful AI models for intelligent mod recommendations:
-
-1. **AI Analysis** (when API key is configured):
-   - Sends your world description to a free AI model (LLaMA 3.2, Gemini 2.0, etc.)
-   - AI analyzes available mods and matches them to your requirements
-   - Returns recommendations with relevance scores and reasoning
-   - Considers context, themes, and mod synergies
-
-2. **Fallback Mode** (when no API key):
-   - Uses rule-based keyword matching
-   - Analyzes categories: Building, adventure, technology, magic
-   - Matches themes: Medieval, fantasy, sci-fi, etc.
-   - Still provides useful recommendations
-
-**AI Models Used:** HaiTale uses free models from OpenRouter (no credit card required):
-- Meta LLaMA 3.2 3B Instruct (default)
-- Google Gemini 2.0 Flash
-- Mistral 7B Instruct
-- Qwen 2 7B Instruct
-
-### Security Verification
-
-Every mod download is verified for safety:
-
-1. **License Check**: Only mods with approved open-source licenses (MIT, Apache, GPL, etc.) can be installed
-2. **Checksum Verification**: SHA-256 checksums are verified against repository metadata
-3. **Download Integrity**: Files are quarantined and verified before installation
-4. **Backup Creation**: Automatic backups before any modifications
-
-### Mod Sources
-
-HaiTale supports multiple mod repositories:
-- **Modrinth** (planned)
-- **CurseForge** (planned)
-- **GitHub Releases** (planned)
-
-*Currently uses sample data for demonstration. Real repository integration coming soon.*
-
-## Configuration
-
-Edit `src/main/resources/application.properties` to configure:
-
-```properties
-# OpenRouter AI Configuration
-openrouter.api.url=https://openrouter.ai/api/v1/chat/completions
-openrouter.api.key=${OPENROUTER_API_KEY:}
-openrouter.model=meta-llama/llama-3.2-3b-instruct:free
-openrouter.site.url=https://github.com/yourusername/haitale
-openrouter.site.name=HaiTale
-
-# Mod Repository Configuration
-mod.repository.cache.enabled=true
-mod.repository.modrinth.enabled=true
-mod.repository.curseforge.enabled=true
-
-# Security Settings
-mod.security.checksum.required=true
-mod.security.free-license.required=true
-```
-
-**Change AI Model:**
-```properties
-# Try different free models
-openrouter.model=google/gemini-2.0-flash-exp:free
-openrouter.model=mistralai/mistral-7b-instruct:free
-```
-
-See [SETUP.md](SETUP.md) for detailed configuration instructions.
-
-## Project Structure
-
-```
-src/
-├── main/java/ai/haitale/
-│   ├── HaitaleCommand.java          # Main CLI entry point
-│   ├── commands/                     # CLI subcommands
-│   │   ├── RecommendCommand.java     # AI recommendation command
-│   │   ├── InstallCommand.java       # Mod installation command
-│   │   ├── SearchCommand.java        # Mod search command
-│   │   └── ListCommand.java          # List installed mods
-│   ├── model/                        # Domain models
-│   │   ├── Mod.java                  # Mod metadata
-│   │   ├── ModRecommendation.java    # AI recommendation result
-│   │   ├── WorldPreferences.java     # User preferences
-│   │   └── InstallationManifest.java # Installation tracking
-│   └── service/                      # Business logic
-│       ├── AIRecommendationService.java    # AI-powered recommendations
-│       ├── ModRepositoryService.java       # Mod catalog management
-│       ├── ModDownloadService.java         # Secure download & verification
-│       └── ModInstallationService.java     # Installation management
-```
-
-## Technology Stack
-
-- **Framework**: Micronaut 4.10.7
-- **CLI**: Picocli
-- **Serialization**: Micronaut Serde (Jackson)
-- **Build**: Gradle 8.14
-- **Java**: 21
-- **Testing**: JUnit 5
-
-## Future Enhancements
-
-- [ ] Integration with real mod repositories (Modrinth, CurseForge APIs)
-- [ ] LLM integration for advanced AI recommendations (OpenAI, Anthropic, Ollama)
-- [ ] Dependency resolution between mods
-- [ ] Mod versioning and updates
-- [ ] Conflict detection
-- [ ] GUI interface
-- [ ] Mod pack creation and sharing
-- [ ] Community ratings and reviews integration
-
-## Safety & Security
-
-HaiTale takes security seriously:
-
-- **License Verification**: Only free/open-source mods can be installed
-- **Checksum Validation**: All downloads are verified with SHA-256 hashes
-- **Automatic Backups**: Your mods directory is backed up before changes
-- **No Root Access**: Runs with user permissions only
-- **Transparent Operations**: All actions are logged and visible
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
-## License
-
-This project is open-source. License details to be determined.
-
-## Support
-
-For issues, questions, or suggestions, please open an issue on the project repository.
+Important: Do not commit or share your API key. If it was accidentally shared, revoke/rotate it at OpenRouter immediately.
 
 ---
 
-**Note**: HyTale is a trademark of Hypixel Studios. This is an independent fan project and is not affiliated with or endorsed by Hypixel Studios.
+## 3) Download the ready-made JAR
+
+HaiTale releases built JARs on GitHub Releases whenever the project maintainer publishes a tagged release. To download:
+
+1. Open the project on GitHub: https://github.com/<your-repo-owner>/haitale
+2. Click the **Releases** tab
+3. Download the latest `haitale-<tag>.jar` asset (for example `haitale-v1.2.0.jar`)
+
+If you prefer a direct link to the release, the Release page will show the download URL.
+
+---
+
+## 4) Run the JAR (examples)
+
+Open a terminal and run the downloaded JAR with Java 21 (or newer).
+
+- Get AI-powered recommendations (if API key set):
+
+```bash
+java -jar haitale-v1.2.0.jar recommend "I want a medieval fantasy world with dragons and magic"
+```
+
+- Search for mods by keyword:
+
+```bash
+java -jar haitale-v1.2.0.jar search magic
+```
+
+- Install mod(s) by ID (IDs are shown in recommendation/search output):
+
+```bash
+java -jar haitale-v1.2.0.jar install magic-realms-2 fantasy-creatures-6
+```
+
+- List installed mods:
+
+```bash
+java -jar haitale-v1.2.0.jar list
+```
+
+Replace `haitale-v1.2.0.jar` with the actual filename you downloaded.
+
+---
+
+## Safety & privacy
+
+- HaiTale only installs mods with free/open-source licenses (MIT, GPL, Apache, etc.).
+- Every download is checksum-verified to reduce the risk of corrupted or tampered files.
+- The tool creates backups of your mods folder before installing anything.
+- Your OpenRouter API key is kept local — do not commit it to source control.
+
+---
+
+## Need help?
+
+If you'd like:
+- A one-line helper script to set the API key and run a sample command, or
+- A short GIF showing how to download the JAR from Releases and run it — I can create that for you.
+
+Tell me which and I’ll add it.
