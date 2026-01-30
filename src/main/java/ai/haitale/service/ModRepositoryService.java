@@ -1,7 +1,7 @@
 package ai.haitale.service;
 
 import ai.haitale.model.Mod;
-import io.micronaut.context.annotation.Property;
+import io.micronaut.context.annotation.Value;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,24 +22,26 @@ public class ModRepositoryService {
     private final CurseForgeClient curseForgeClient;
     private final GitHubClient gitHubClient;
 
-    private final boolean modrinthEnabled;
-    private final boolean curseforgeEnabled;
-    private final boolean githubEnabled;
+    @Value("${mod.repository.modrinth.enabled:false}")
+    private boolean modrinthEnabled;
+
+    @Value("${mod.repository.curseforge.enabled:false}")
+    private boolean curseforgeEnabled;
+
+    @Value("${mod.repository.github.enabled:false}")
+    private boolean githubEnabled;
+
+    @Value("${mod.repository.github.example-repos:}")
+    private String githubExampleReposCsv;
 
     public ModRepositoryService(
         ModrinthClient modrinthClient,
         CurseForgeClient curseForgeClient,
-        GitHubClient gitHubClient,
-        @Property(name = "mod.repository.modrinth.enabled") boolean modrinthEnabled,
-        @Property(name = "mod.repository.curseforge.enabled") boolean curseforgeEnabled,
-        @Property(name = "mod.repository.github.enabled") boolean githubEnabled
+        GitHubClient gitHubClient
     ) {
         this.modrinthClient = modrinthClient;
         this.curseForgeClient = curseForgeClient;
         this.gitHubClient = gitHubClient;
-        this.modrinthEnabled = modrinthEnabled;
-        this.curseforgeEnabled = curseforgeEnabled;
-        this.githubEnabled = githubEnabled;
 
         // Initialize with some sample mods for demonstration (kept as fallback)
         initializeSampleMods();
@@ -229,8 +231,10 @@ public class ModRepositoryService {
         if (githubEnabled && gitHubClient != null) {
             try {
                 LOG.info("Fetching some releases from GitHub (example repos)...");
-                // Example repos can be configured later; for now we won't hardcode many
-                List<String> exampleRepos = List.of();
+                // Example repos can be configured via application properties
+                List<String> exampleRepos = githubExampleReposCsv == null || githubExampleReposCsv.isBlank()
+                    ? List.of()
+                    : List.of(githubExampleReposCsv.split(","));
                 for (String repo : exampleRepos) {
                     List<Mod> fromGit = gitHubClient.fetchLatestRelease(repo);
                     for (Mod m : fromGit) {

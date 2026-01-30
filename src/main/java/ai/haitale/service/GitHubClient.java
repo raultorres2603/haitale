@@ -1,7 +1,6 @@
 package ai.haitale.service;
 
 import ai.haitale.model.Mod;
-import io.micronaut.serde.ObjectMapper;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,10 +23,8 @@ public class GitHubClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
 
     private final HttpClient httpClient;
-    private final ObjectMapper objectMapper;
 
-    public GitHubClient(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+    public GitHubClient() {
         this.httpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 
@@ -53,14 +50,13 @@ public class GitHubClient {
             String body = asString(json.get("body"));
             String author = null;
             Object authorObj = json.get("author");
-            if (authorObj instanceof Map<?,?> authorMap) author = asString(((Map<?,?>) authorMap).get("login"));
+            if (authorObj instanceof Map<?,?> authorMap) author = asString(authorMap.get("login"));
 
             List<Mod> result = new ArrayList<>();
             Object assetsObj = json.get("assets");
             if (assetsObj instanceof List<?> assets) {
                 for (Object a : assets) {
-                    if (!(a instanceof Map<?,?> assetMap)) continue;
-                    Map<?,?> asset = assetMap;
+                    if (!(a instanceof Map<?,?> asset)) continue;
                     String url = asString(asset.get("browser_download_url"));
                     String filename = asString(asset.get("name"));
                     long size = 0L;

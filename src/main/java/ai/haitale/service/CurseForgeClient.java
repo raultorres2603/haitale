@@ -1,8 +1,7 @@
 package ai.haitale.service;
 
 import ai.haitale.model.Mod;
-import io.micronaut.serde.ObjectMapper;
-import io.micronaut.context.annotation.Property;
+import io.micronaut.context.annotation.Value;
 import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,12 +24,10 @@ public class CurseForgeClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
 
     private final HttpClient httpClient;
-    private final ObjectMapper objectMapper;
-    private final String apiKey;
+    @Value("${mod.repository.curseforge.api-key:}")
+    private String apiKey;
 
-    public CurseForgeClient(ObjectMapper objectMapper, @Property(name = "mod.repository.curseforge.api-key") String apiKey) {
-        this.objectMapper = objectMapper;
-        this.apiKey = apiKey;
+    public CurseForgeClient() {
         this.httpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 
@@ -65,8 +62,7 @@ public class CurseForgeClient {
 
             List<Mod> result = new ArrayList<>();
             for (Object o : dataList) {
-                if (!(o instanceof Map<?,?> entryMap)) continue;
-                Map<?,?> entry = entryMap;
+                if (!(o instanceof Map<?,?> entry)) continue;
                 String id = asString(entry.get("id"));
                 String name = asString(entry.get("name"));
                 String summary = asString(entry.get("summary"));
