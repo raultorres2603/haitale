@@ -5,6 +5,7 @@ import ai.haitale.model.InstallationManifest.InstalledMod;
 import ai.haitale.model.Mod;
 import io.micronaut.serde.ObjectMapper;
 import jakarta.inject.Singleton;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,25 +38,7 @@ public class ModInstallationService {
         String home = System.getProperty("user.home");
         String os = System.getProperty("os.name").toLowerCase();
 
-        Path[] possiblePaths;
-        if (os.contains("win")) {
-            possiblePaths = new Path[]{
-                Path.of(home, "AppData", "Roaming", "HyTale"),
-                Path.of(home, "Documents", "HyTale"),
-                Path.of("C:", "Program Files", "HyTale")
-            };
-        } else if (os.contains("mac")) {
-            possiblePaths = new Path[]{
-                Path.of(home, "Library", "Application Support", "HyTale"),
-                Path.of(home, "Documents", "HyTale")
-            };
-        } else { // Linux
-            possiblePaths = new Path[]{
-                Path.of(home, ".hytale"),
-                Path.of(home, ".local", "share", "HyTale"),
-                Path.of(home, "HyTale")
-            };
-        }
+        Path[] possiblePaths = getPossiblePaths(home, os);
 
         for (Path path : possiblePaths) {
             if (Files.exists(path) && Files.isDirectory(path)) {
@@ -68,6 +51,30 @@ public class ModInstallationService {
         Path fallback = Path.of(home, ".haitale");
         LOG.warn("HyTale directory not found, using default: {}", fallback);
         return fallback;
+    }
+
+    private static Path @NonNull [] getPossiblePaths(String home, String os) {
+        Path[] possiblePaths;
+        Path path = Path.of(home, "Documents", "HyTale");
+        if (os.contains("win")) {
+            possiblePaths = new Path[]{
+                Path.of(home, "AppData", "Roaming", "HyTale"),
+                    path,
+                Path.of("C:", "Program Files", "HyTale")
+            };
+        } else if (os.contains("mac")) {
+            possiblePaths = new Path[]{
+                Path.of(home, "Library", "Application Support", "HyTale"),
+                    path
+            };
+        } else { // Linux
+            possiblePaths = new Path[]{
+                Path.of(home, ".hytale"),
+                Path.of(home, ".local", "share", "HyTale"),
+                Path.of(home, "HyTale")
+            };
+        }
+        return possiblePaths;
     }
 
     /**
