@@ -6,7 +6,9 @@
 
 [![Verify checksum](https://img.shields.io/badge/verify-checksum-blue?style=flat-square)](https://github.com/raultorres2603/haitale/releases/latest/download/haitale-latest.jar.sha256)
 
-HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods from CurseForge — then you can install the ones you like.
+HaiTale helps you find and install mods for HyTale by describing the kind of world you want to create. Tell it in plain English (for example: "medieval world with dragons and magic") and it suggests mods from GitHub — then you can install the ones you like.
+
+**NEW:** Now using GitHub exclusively to find and install Hytale mods!
 
 This short guide is for non-technical users and shows only what you need to run the ready-made JAR downloaded from the project's Releases on GitHub.
 
@@ -24,22 +26,24 @@ This short guide is for non-technical users and shows only what you need to run 
 
 ## 1) Get API Keys
 
-### CurseForge API Key (Required)
+### GitHub Token (Optional but Recommended)
 
-HaiTale fetches Hytale mods from CurseForge. You need a free API key:
+HaiTale searches GitHub for Hytale mods. Without a token, you're limited to 60 API requests/hour. With a token, you get 5,000 requests/hour.
 
-1. Go to https://console.curseforge.com/
-2. Create an account or log in
-3. Navigate to "API Keys" section
-4. Create a new API key
-5. Copy your API key
+**To get a GitHub token:**
 
-### OpenRouter API Key (Optional but recommended)
+1. Go to https://github.com/settings/tokens
+2. Click "Generate new token" → "Tokens (classic)"
+3. Give it a name: "HaiTale"
+4. Select scope: **public_repo** (read-only)
+5. Click "Generate token" and copy it
+
+### OpenRouter API Key (Optional)
 
 For AI-powered mod recommendations:
 
 1. Go to https://openrouter.ai/ and create an account
-2. Open your API keys page and create/copy a key
+2. Get your API key from the dashboard
 
 If you don't set an OpenRouter key, HaiTale still works using simple keyword matching.
 
@@ -52,22 +56,22 @@ Set the API keys as environment variables before running the JAR.
 - macOS / Linux (temporary for current terminal):
 
 ```bash
-export CURSEFORGE_API_KEY="your-curseforge-key-here"
+export GITHUB_TOKEN="ghp_your_token_here"  # Optional
 export OPENROUTER_API_KEY="sk-or-v1-your-key-here"  # Optional
 ```
 
 - macOS / Linux (persistent for future terminals — add to your ~/.zshrc):
 
 ```bash
-echo 'export CURSEFORGE_API_KEY="your-curseforge-key-here"' >> ~/.zshrc
-echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.zshrc  # Optional
+echo 'export GITHUB_TOKEN="ghp_your_token_here"' >> ~/.zshrc
+echo 'export OPENROUTER_API_KEY="sk-or-v1-your-key-here"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
 - Windows (Command Prompt):
 
 ```cmd
-setx CURSEFORGE_API_KEY "your-curseforge-key-here"
+setx GITHUB_TOKEN "ghp_your_token_here"
 setx OPENROUTER_API_KEY "sk-or-v1-your-key-here"
 ```
 

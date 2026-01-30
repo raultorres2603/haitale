@@ -19,8 +19,7 @@ public class ModRepositoryService {
 
     private final List<Mod> modCache = new ArrayList<>();
 
-    private final CurseForgeClient curseForgeClient;
-    private final GitHubClient gitHubClient;
+     private final GitHubClient gitHubClient;
 
     @Value("${mod.repository.modrinth.enabled}")
     private boolean modrinthEnabled;
@@ -35,10 +34,8 @@ public class ModRepositoryService {
     private String githubExampleReposCsv;
 
     public ModRepositoryService(
-        CurseForgeClient curseForgeClient,
         GitHubClient gitHubClient
     ) {
-        this.curseForgeClient = curseForgeClient;
         this.gitHubClient = gitHubClient;
     }
 
@@ -200,25 +197,6 @@ public class ModRepositoryService {
         Set<String> seen = new HashSet<>();
         // Keep existing sample mods as fallback
         List<Mod> newCache = new ArrayList<>();
-
-        // Try CurseForge
-        LOG.debug("Checking CurseForge: enabled={}, client={}", curseforgeEnabled, curseForgeClient != null);
-        if (curseforgeEnabled && curseForgeClient != null) {
-            try {
-                LOG.info("Fetching mods from CurseForge...");
-                List<Mod> fromCurse = curseForgeClient.search("", 50);
-                for (Mod m : fromCurse) {
-                    if (m.getId() == null) continue;
-                    if (seen.add(m.getId())) newCache.add(m);
-                }
-                LOG.info("Imported {} mods from CurseForge", fromCurse.size());
-            } catch (Exception e) {
-                LOG.warn("Failed to fetch from CurseForge: {}", e.getMessage(), e);
-            }
-        } else {
-            LOG.warn("CurseForge integration disabled or client not available (enabled={}, client={})",
-                curseforgeEnabled, curseForgeClient != null);
-        }
 
         // Try GitHub - this is best-effort and requires repository identifiers to be known
         if (githubEnabled && gitHubClient != null) {
