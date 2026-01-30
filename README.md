@@ -44,15 +44,20 @@ Important: Do not commit or share your API key. If it was accidentally shared, r
 
 ---
 
-## 3) Download the ready-made JAR
+## 3) When is a new JAR built (and where to download it)
 
-HaiTale releases built JARs on GitHub Releases whenever the project maintainer publishes a tagged release. To download:
+We build and publish a ready-to-run JAR automatically whenever code is pushed to the `master` branch. Each push creates an automated GitHub Release with the built JAR attached.
 
-1. Open the project on GitHub: https://github.com/<your-repo-owner>/haitale
-2. Click the **Releases** tab
-3. Download the latest `haitale-<tag>.jar` asset (for example `haitale-v1.2.0.jar`)
+- How it works (simple):
+  - You (or a maintainer) push to `master` → GitHub Actions runs a build → a Release is created for that commit and the JAR is attached.
+  - You can also run the workflow manually from GitHub's Actions tab.
 
-If you prefer a direct link to the release, the Release page will show the download URL.
+- Where to download:
+  1. Open the project on GitHub: https://github.com/raultorres2603/haitale
+  2. Click the **Releases** tab
+  3. Download the latest `haitale-<commit-sha>.jar`
+
+This means a new JAR is produced on every push to `master` (or when manually triggered). If you want to publish only on version bumps instead, tell me and I can change the process to build only on tags.
 
 ---
 
@@ -63,28 +68,28 @@ Open a terminal and run the downloaded JAR with Java 21 (or newer).
 - Get AI-powered recommendations (if API key set):
 
 ```bash
-java -jar haitale-v1.2.0.jar recommend "I want a medieval fantasy world with dragons and magic"
+java -jar haitale-<commit-sha>.jar recommend "I want a medieval fantasy world with dragons and magic"
 ```
 
 - Search for mods by keyword:
 
 ```bash
-java -jar haitale-v1.2.0.jar search magic
+java -jar haitale-<commit-sha>.jar search magic
 ```
 
 - Install mod(s) by ID (IDs are shown in recommendation/search output):
 
 ```bash
-java -jar haitale-v1.2.0.jar install magic-realms-2 fantasy-creatures-6
+java -jar haitale-<commit-sha>.jar install magic-realms-2 fantasy-creatures-6
 ```
 
 - List installed mods:
 
 ```bash
-java -jar haitale-v1.2.0.jar list
+java -jar haitale-<commit-sha>.jar list
 ```
 
-Replace `haitale-v1.2.0.jar` with the actual filename you downloaded.
+Replace `haitale-<commit-sha>.jar` with the actual filename you downloaded from Releases.
 
 ---
 
@@ -100,7 +105,7 @@ Replace `haitale-v1.2.0.jar` with the actual filename you downloaded.
 ## Need help?
 
 If you'd like:
-- A one-line helper script to set the API key and run a sample command, or
+- A one-line helper example to set the API key and run a sample command, or
 - A short GIF showing how to download the JAR from Releases and run it — I can create that for you.
 
 Tell me which and I’ll add it.
