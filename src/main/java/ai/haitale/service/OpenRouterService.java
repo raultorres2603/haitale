@@ -3,6 +3,8 @@ package ai.haitale.service;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
+import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpStatus;
 import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.annotation.Client;
 import io.micronaut.serde.annotation.Serdeable;
@@ -10,8 +12,11 @@ import jakarta.inject.Singleton;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Map;
 
 @Singleton
 public class OpenRouterService {
@@ -52,38 +57,118 @@ public class OpenRouterService {
         String systemPrompt = buildSystemPrompt(availableModsList);
         String userPrompt = buildUserPrompt(worldDescription);
 
-        try {
-            OpenRouterRequest request = new OpenRouterRequest(
-                model,
-                List.of(
-                    new OpenRouterRequest.Message("system", systemPrompt),
-                    new OpenRouterRequest.Message("user", userPrompt)
-                ),
-                0.7,
-                2000
-            );
+        OpenRouterRequest request = new OpenRouterRequest(
+            model,
+            List.of(
+                new OpenRouterRequest.Message("system", systemPrompt),
+                new OpenRouterRequest.Message("user", userPrompt)
+            ),
+            0.7,
+            2000
+        );
 
-            HttpRequest<?> httpRequest = HttpRequest.POST("/api/v1/chat/completions", request)
-                .header("Authorization", "Bearer " + apiKey)
-                .header("HTTP-Referer", siteUrl)
-                .header("X-Title", siteName)
-                .header("Content-Type", "application/json");
+        HttpRequest<?> httpRequest = HttpRequest.POST(apiUrl, request)
+            .header("Authorization", "Bearer " + apiKey)
+            .header("HTTP-Referer", siteUrl)
+            .header("X-Title", siteName)
+            .header("Content-Type", "application/json");
 
-            LOG.info("Calling OpenRouter API with model: {}", model);
-            OpenRouterResponse response = httpClient.toBlocking().retrieve(httpRequest, OpenRouterResponse.class);
+        LOG.info("Calling OpenRouter API with model: {}", model);
 
-            if (response.choices != null && !response.choices.isEmpty()) {
-                String content = response.choices.get(0).message.content;
-                LOG.info("Received AI response ({} tokens)", response.usage != null ? response.usage.totalTokens : "unknown");
-                return content;
+        // Use a robust retry strategy for transient errors like 429
+        OpenRouterResponse response = sendWithRetries(httpRequest, 4);
+        if (response == null) {
+            LOG.warn("OpenRouter request failed after retries; falling back to local recommendations");
+            return null;
+        }
+
+        if (response.choices != null && !response.choices.isEmpty()) {
+            String content = response.choices.get(0).message.content;
+            LOG.info("Received AI response ({} tokens)", response.usage != null ? response.usage.totalTokens : "unknown");
+            return content;
+        }
+
+        LOG.warn("Empty response from OpenRouter API");
+        return null;
+    }
+
+    private OpenRouterResponse sendWithRetries(HttpRequest<?> request, int maxAttempts) {
+        long backoffMillis = 1000L; // initial backoff 1s
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                HttpResponse<OpenRouterResponse> resp = httpClient.toBlocking().exchange(request, OpenRouterResponse.class);
+                HttpStatus status = resp.getStatus();
+
+                if (status.getCode() >= 200 && status.getCode() < 300) {
+                    return resp.getBody().orElse(null);
+                }
+
+                // Handle 429 Too Many Requests specially
+                if (status == HttpStatus.TOO_MANY_REQUESTS) {
+                    String retryAfter = resp.getHeaders().get("Retry-After");
+                    long waitMillis = computeRetryAfterMillis(retryAfter, backoffMillis);
+                    LOG.warn("Received 429 Too Many Requests (attempt {}/{}). Retrying after {} ms", attempt, maxAttempts, waitMillis);
+                    sleep(waitMillis);
+                    backoffMillis = Math.min(backoffMillis * 2, 60_000L);
+                    continue;
+                }
+
+                // For server errors (5xx) apply backoff and retry
+                if (status.getCode() >= 500 && status.getCode() < 600) {
+                    LOG.warn("Server error {} from OpenRouter (attempt {}/{}). Backing off {} ms and retrying", status.getCode(), attempt, maxAttempts, backoffMillis);
+                    sleep(backoffMillis);
+                    backoffMillis = Math.min(backoffMillis * 2, 60_000L);
+                    continue;
+                }
+
+                // For other non-success statuses do not retry
+                LOG.error("OpenRouter returned non-retryable status {}: {}", status.getCode(), resp.getStatus().getReason());
+                return null;
+
+            } catch (Exception e) {
+                // network/other client error - retry with backoff
+                LOG.warn("Error calling OpenRouter API on attempt {}/{}: {}", attempt, maxAttempts, e.getMessage());
+                if (attempt == maxAttempts) {
+                    LOG.error("Exhausted retries calling OpenRouter API: {}", e.getMessage(), e);
+                    return null;
+                }
+                sleep(backoffMillis + jitterMillis(backoffMillis));
+                backoffMillis = Math.min(backoffMillis * 2, 60_000L);
             }
+        }
+        return null;
+    }
 
-            LOG.warn("Empty response from OpenRouter API");
-            return null;
+    private long computeRetryAfterMillis(String headerValue, long defaultBackoff) {
+        if (headerValue == null) return defaultBackoff;
+        headerValue = headerValue.trim();
+        try {
+            // If it's an integer, it's seconds
+            long seconds = Long.parseLong(headerValue);
+            return Math.max(500L, seconds * 1000L);
+        } catch (NumberFormatException ignore) {
+            try {
+                // Try parsing an HTTP-date
+                ZonedDateTime date = ZonedDateTime.parse(headerValue, DateTimeFormatter.RFC_1123_DATE_TIME);
+                long millis = Duration.between(Instant.now(), date.toInstant()).toMillis();
+                return Math.max(500L, millis);
+            } catch (Exception e) {
+                LOG.debug("Unable to parse Retry-After header: {}", headerValue);
+                return defaultBackoff;
+            }
+        }
+    }
 
-        } catch (Exception e) {
-            LOG.error("Error calling OpenRouter API: {}", e.getMessage(), e);
-            return null;
+    private long jitterMillis(long base) {
+        // up to 20% jitter
+        return (long) (Math.random() * (base * 0.2));
+    }
+
+    private void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
