@@ -169,6 +169,14 @@ public class OpenRouterService {
                     return resp.getBody().orElse(null);
                 }
 
+                // Handle 402 Payment Required - quota exceeded, don't retry
+                if (status.getCode() == 402) {
+                    LOG.error("OpenRouter API quota exceeded (402 Payment Required). " +
+                             "Free tier limit reached. Falling back to local recommendations. " +
+                             "Visit https://openrouter.ai to check your usage or upgrade.");
+                    return null;
+                }
+
                 // Handle 429 Too Many Requests specially
                 if (status == HttpStatus.TOO_MANY_REQUESTS) {
                     String retryAfter = resp.getHeaders().get("Retry-After");

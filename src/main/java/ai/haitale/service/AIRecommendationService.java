@@ -53,6 +53,11 @@ public class AIRecommendationService {
 
         List<Mod> allMods = modRepositoryService.getFreeMods(); // Only free mods
 
+        if (allMods.isEmpty()) {
+            LOG.warn("No mods available in repository. Check repository configuration.");
+            return List.of();
+        }
+
         // Try AI-powered recommendations first
         List<ModRecommendation> aiRecommendations = getAIBasedRecommendations(preferences.getDescription(), allMods);
         if (aiRecommendations != null && !aiRecommendations.isEmpty()) {
@@ -61,7 +66,8 @@ public class AIRecommendationService {
         }
 
         // Fallback to rule-based recommendations
-        LOG.info("Using fallback rule-based recommendations");
+        LOG.warn("AI recommendations unavailable (quota exceeded or API error). Using rule-based fallback.");
+        LOG.info("💡 Tip: Rule-based matching uses keyword analysis instead of AI understanding.");
         return getRuleBasedRecommendations(allMods, preferences);
     }
 
