@@ -1,5 +1,7 @@
 package ai.haitale.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.http.HttpRequest;
@@ -16,12 +18,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.StringJoiner;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Singleton
 public class OpenRouterService {
@@ -40,11 +41,18 @@ public class OpenRouterService {
     private final long maxBackoffMs;
     private final double jitterFraction;
 
-    // In-memory LRU cache
+    // Caffeine cache
     private final boolean cacheEnabled;
     private final long cacheTtlMs;
     private final int cacheMaxEntries;
-    private final Map<String, CacheEntry> cache;
+    private final Cache<String, String> caffeineCache;
+
+    // Circuit breaker
+    private final boolean circuitEnabled;
+    private final int circuitFailureThreshold;
+    private final long circuitResetTimeoutMs;
+    private final AtomicInteger failureCounter = new AtomicInteger(0);
+    private volatile long circuitOpenedAt = 0L; // timestamp when circuit opened
 
     public OpenRouterService(
         @Client("https://openrouter.ai") HttpClient httpClient,
@@ -59,7 +67,10 @@ public class OpenRouterService {
         @Property(name = "openrouter.retry.jitterFraction") double jitterFraction,
         @Property(name = "openrouter.cache.enabled") boolean cacheEnabled,
         @Property(name = "openrouter.cache.ttlSeconds") long cacheTtlSeconds,
-        @Property(name = "openrouter.cache.maxEntries") int cacheMaxEntries
+        @Property(name = "openrouter.cache.maxEntries") int cacheMaxEntries,
+        @Property(name = "openrouter.circuit.enabled") boolean circuitEnabled,
+        @Property(name = "openrouter.circuit.failureThreshold") int circuitFailureThreshold,
+        @Property(name = "openrouter.circuit.resetTimeoutSeconds") long circuitResetTimeoutSeconds
     ) {
         this.httpClient = httpClient;
         this.apiKey = apiKey;
@@ -77,13 +88,18 @@ public class OpenRouterService {
         this.cacheTtlMs = Math.max(0L, cacheTtlSeconds) * 1000L;
         this.cacheMaxEntries = Math.max(1, cacheMaxEntries);
 
-        // Create a synchronized LRU map using LinkedHashMap accessOrder=true
-        this.cache = Collections.synchronizedMap(new LinkedHashMap<String, CacheEntry>(16, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<String, CacheEntry> eldest) {
-                return size() > OpenRouterService.this.cacheMaxEntries;
-            }
-        });
+        this.circuitEnabled = circuitEnabled;
+        this.circuitFailureThreshold = Math.max(1, circuitFailureThreshold);
+        this.circuitResetTimeoutMs = Math.max(1L, circuitResetTimeoutSeconds) * 1000L;
+
+        if (cacheEnabled) {
+            this.caffeineCache = Caffeine.newBuilder()
+                .expireAfterWrite(this.cacheTtlMs, TimeUnit.MILLISECONDS)
+                .maximumSize(this.cacheMaxEntries)
+                .build();
+        } else {
+            this.caffeineCache = null;
+        }
     }
 
     /**
@@ -95,9 +111,15 @@ public class OpenRouterService {
             return null;
         }
 
+        // Circuit breaker check
+        if (isCircuitOpen()) {
+            LOG.warn("OpenRouter circuit is OPEN. Short-circuiting AI call and falling back.");
+            return null;
+        }
+
         String cacheKey = buildCacheKey(worldDescription, availableModsList, model);
         if (cacheEnabled) {
-            String cached = getCachedResponse(cacheKey);
+            String cached = caffeineCache.getIfPresent(cacheKey);
             if (cached != null) {
                 LOG.info("OpenRouter cache hit for key (len {}), returning cached response", cacheKey.length());
                 return cached;
@@ -128,14 +150,18 @@ public class OpenRouterService {
         // Use a robust retry strategy for transient errors like 429
         OpenRouterResponse response = sendWithRetries(httpRequest, maxAttempts);
         if (response == null) {
+            recordFailure();
             LOG.warn("OpenRouter request failed after retries; falling back to local recommendations");
             return null;
         }
 
+        // success -> reset failure counter
+        recordSuccess();
+
         if (response.choices != null && !response.choices.isEmpty()) {
             String content = response.choices.get(0).message.content;
             LOG.info("Received AI response ({} tokens)", response.usage != null ? response.usage.totalTokens : "unknown");
-            if (cacheEnabled && content != null) putCachedResponse(cacheKey, content);
+            if (cacheEnabled && content != null) caffeineCache.put(cacheKey, content);
             return content;
         }
 
@@ -233,29 +259,6 @@ public class OpenRouterService {
         return Integer.toHexString(joiner.toString().hashCode());
     }
 
-    private String getCachedResponse(String key) {
-        CacheEntry entry = cache.get(key);
-        if (entry == null) return null;
-        if (cacheTtlMs > 0 && (System.currentTimeMillis() - entry.createdAt) > cacheTtlMs) {
-            cache.remove(key);
-            return null;
-        }
-        return entry.response;
-    }
-
-    private void putCachedResponse(String key, String response) {
-        cache.put(key, new CacheEntry(response, System.currentTimeMillis()));
-    }
-
-    private static class CacheEntry {
-        final String response;
-        final long createdAt;
-        CacheEntry(String response, long createdAt) {
-            this.response = response;
-            this.createdAt = createdAt;
-        }
-    }
-
     private String buildSystemPrompt(List<String> availableModsList) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are a helpful assistant that recommends HyTale mods based on user preferences. ");
@@ -337,4 +340,46 @@ public class OpenRouterService {
         public String getReasoning() { return reasoning; }
         public void setReasoning(String reasoning) { this.reasoning = reasoning; }
     }
+
+    // Circuit breaker helpers
+    private boolean isCircuitOpen() {
+        if (!circuitEnabled) return false;
+        int failures = failureCounter.get();
+        if (failures < circuitFailureThreshold) return false;
+        // if reset timeout passed, allow retry and reset
+        if (circuitOpenedAt == 0) {
+            circuitOpenedAt = System.currentTimeMillis();
+            LOG.warn("Circuit opened at {} after {} failures", circuitOpenedAt, failures);
+            return true;
+        }
+        long elapsed = System.currentTimeMillis() - circuitOpenedAt;
+        if (elapsed >= circuitResetTimeoutMs) {
+            // reset
+            LOG.info("Circuit reset timeout elapsed ({} ms). Resetting circuit.", elapsed);
+            failureCounter.set(0);
+            circuitOpenedAt = 0L;
+            return false;
+        }
+        return true;
+    }
+
+    private void recordFailure() {
+        if (!circuitEnabled) return;
+        int failures = failureCounter.incrementAndGet();
+        LOG.warn("OpenRouter failure count incremented: {} (threshold {})", failures, circuitFailureThreshold);
+        if (failures >= circuitFailureThreshold && circuitOpenedAt == 0L) {
+            circuitOpenedAt = System.currentTimeMillis();
+            LOG.error("Circuit opened due to repeated failures at {}", circuitOpenedAt);
+        }
+    }
+
+    private void recordSuccess() {
+        if (!circuitEnabled) return;
+        int prev = failureCounter.getAndSet(0);
+        if (prev > 0) {
+            LOG.info("OpenRouter success after {} failures, resetting failure counter", prev);
+        }
+        circuitOpenedAt = 0L;
+    }
+
 }
