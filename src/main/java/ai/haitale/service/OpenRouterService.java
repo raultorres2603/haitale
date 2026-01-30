@@ -60,18 +60,34 @@ public class OpenRouterService {
     private final AtomicInteger failureCounter = new AtomicInteger(0);
     private volatile long circuitOpenedAt = 0L; // timestamp when circuit opened
 
-    public OpenRouterService(@Client("https://openrouter.ai") HttpClient httpClient) {
+    public OpenRouterService(
+            @Client("https://openrouter.ai") HttpClient httpClient,
+            @Value("${openrouter.retry.maxAttempts:4}") int maxAttempts,
+            @Value("${openrouter.retry.initialBackoffMs:1000}") long initialBackoffMs,
+            @Value("${openrouter.retry.maxBackoffMs:60000}") long maxBackoffMs,
+            @Value("${openrouter.retry.jitterFraction:0.2}") double jitterFraction,
+            @Value("${openrouter.cache.enabled:true}") boolean cacheEnabled,
+            @Value("${openrouter.cache.ttlSeconds:300}") int cacheTtlSeconds,
+            @Value("${openrouter.cache.maxEntries:128}") int cacheMaxEntries,
+            @Value("${openrouter.circuit.enabled:true}") boolean circuitEnabled,
+            @Value("${openrouter.circuit.failureThreshold:5}") int circuitFailureThreshold,
+            @Value("${openrouter.circuit.resetTimeoutSeconds:60}") long circuitResetTimeoutSeconds
+    ) {
         this.httpClient = httpClient;
-        // runtime configuration will be injected into @Value fields; provide reasonable defaults here
-        this.maxAttempts = 3;
-        this.initialBackoffMs = 500L;
-        this.maxBackoffMs = 2000L;
-        this.jitterFraction = 0.1;
-        this.cacheEnabled = false;
-        this.caffeineCache = null;
-        this.circuitEnabled = false;
-        this.circuitFailureThreshold = 5;
-        this.circuitResetTimeoutMs = 60 * 1000L;
+        this.maxAttempts = maxAttempts;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
+        this.jitterFraction = jitterFraction;
+        this.cacheEnabled = cacheEnabled;
+        this.caffeineCache = cacheEnabled
+            ? com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                .expireAfterWrite(java.time.Duration.ofSeconds(cacheTtlSeconds))
+                .maximumSize(cacheMaxEntries)
+                .build()
+            : null;
+        this.circuitEnabled = circuitEnabled;
+        this.circuitFailureThreshold = circuitFailureThreshold;
+        this.circuitResetTimeoutMs = circuitResetTimeoutSeconds * 1000L;
     }
 
     /**
@@ -117,7 +133,8 @@ public class OpenRouterService {
             .header("X-Title", siteName)
             .header("Content-Type", "application/json");
 
-        LOG.info("Calling OpenRouter API with model: {}", model);
+        LOG.info("Calling OpenRouter API with model: {} (max retries: {}, initial backoff: {}ms, max backoff: {}ms)",
+                 model, maxAttempts, initialBackoffMs, maxBackoffMs);
 
         // Use a robust retry strategy for transient errors like 429
         OpenRouterResponse response = sendWithRetries(httpRequest, maxAttempts);
@@ -156,8 +173,14 @@ public class OpenRouterService {
                 if (status == HttpStatus.TOO_MANY_REQUESTS) {
                     String retryAfter = resp.getHeaders().get("Retry-After");
                     long waitMillis = computeRetryAfterMillis(retryAfter, backoffMillis);
-                    LOG.warn("Received 429 Too Many Requests (attempt {}/{}). Retrying after {} ms", attempt, maxAttempts, waitMillis);
-                    sleep(waitMillis + jitterMillis(waitMillis));
+                    long jitter = jitterMillis(waitMillis);
+                    long totalWait = waitMillis + jitter;
+                    LOG.warn("Rate limited by OpenRouter API (429 Too Many Requests) on attempt {}/{}. " +
+                             "Waiting {} ms (base: {} ms, jitter: {} ms) before retry. " +
+                             "Retry-After header: {}",
+                             attempt, maxAttempts, totalWait, waitMillis, jitter,
+                             retryAfter != null ? retryAfter : "not provided");
+                    sleep(totalWait);
                     backoffMillis = Math.min(backoffMillis * 2, maxBackoffMs);
                     continue;
                 }
