@@ -16,7 +16,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.StringJoiner;
 
 @Singleton
 public class OpenRouterService {
@@ -29,13 +34,32 @@ public class OpenRouterService {
     private final String siteUrl;
     private final String siteName;
 
+    // Retry/cache configuration
+    private final int maxAttempts;
+    private final long initialBackoffMs;
+    private final long maxBackoffMs;
+    private final double jitterFraction;
+
+    // In-memory LRU cache
+    private final boolean cacheEnabled;
+    private final long cacheTtlMs;
+    private final int cacheMaxEntries;
+    private final Map<String, CacheEntry> cache;
+
     public OpenRouterService(
         @Client("https://openrouter.ai") HttpClient httpClient,
         @Property(name = "openrouter.api.key") @Nullable String apiKey,
         @Property(name = "openrouter.api.url") String apiUrl,
         @Property(name = "openrouter.model") String model,
         @Property(name = "openrouter.site.url") String siteUrl,
-        @Property(name = "openrouter.site.name") String siteName
+        @Property(name = "openrouter.site.name") String siteName,
+        @Property(name = "openrouter.retry.maxAttempts") int maxAttempts,
+        @Property(name = "openrouter.retry.initialBackoffMs") long initialBackoffMs,
+        @Property(name = "openrouter.retry.maxBackoffMs") long maxBackoffMs,
+        @Property(name = "openrouter.retry.jitterFraction") double jitterFraction,
+        @Property(name = "openrouter.cache.enabled") boolean cacheEnabled,
+        @Property(name = "openrouter.cache.ttlSeconds") long cacheTtlSeconds,
+        @Property(name = "openrouter.cache.maxEntries") int cacheMaxEntries
     ) {
         this.httpClient = httpClient;
         this.apiKey = apiKey;
@@ -43,6 +67,23 @@ public class OpenRouterService {
         this.model = model;
         this.siteUrl = siteUrl;
         this.siteName = siteName;
+
+        this.maxAttempts = Math.max(1, maxAttempts);
+        this.initialBackoffMs = Math.max(100L, initialBackoffMs);
+        this.maxBackoffMs = Math.max(this.initialBackoffMs, maxBackoffMs);
+        this.jitterFraction = Math.max(0.0, Math.min(1.0, jitterFraction));
+
+        this.cacheEnabled = cacheEnabled;
+        this.cacheTtlMs = Math.max(0L, cacheTtlSeconds) * 1000L;
+        this.cacheMaxEntries = Math.max(1, cacheMaxEntries);
+
+        // Create a synchronized LRU map using LinkedHashMap accessOrder=true
+        this.cache = Collections.synchronizedMap(new LinkedHashMap<String, CacheEntry>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, CacheEntry> eldest) {
+                return size() > OpenRouterService.this.cacheMaxEntries;
+            }
+        });
     }
 
     /**
@@ -52,6 +93,15 @@ public class OpenRouterService {
         if (apiKey == null || apiKey.isEmpty()) {
             LOG.warn("OpenRouter API key not configured. Using fallback recommendation logic.");
             return null;
+        }
+
+        String cacheKey = buildCacheKey(worldDescription, availableModsList, model);
+        if (cacheEnabled) {
+            String cached = getCachedResponse(cacheKey);
+            if (cached != null) {
+                LOG.info("OpenRouter cache hit for key (len {}), returning cached response", cacheKey.length());
+                return cached;
+            }
         }
 
         String systemPrompt = buildSystemPrompt(availableModsList);
@@ -76,7 +126,7 @@ public class OpenRouterService {
         LOG.info("Calling OpenRouter API with model: {}", model);
 
         // Use a robust retry strategy for transient errors like 429
-        OpenRouterResponse response = sendWithRetries(httpRequest, 4);
+        OpenRouterResponse response = sendWithRetries(httpRequest, maxAttempts);
         if (response == null) {
             LOG.warn("OpenRouter request failed after retries; falling back to local recommendations");
             return null;
@@ -85,6 +135,7 @@ public class OpenRouterService {
         if (response.choices != null && !response.choices.isEmpty()) {
             String content = response.choices.get(0).message.content;
             LOG.info("Received AI response ({} tokens)", response.usage != null ? response.usage.totalTokens : "unknown");
+            if (cacheEnabled && content != null) putCachedResponse(cacheKey, content);
             return content;
         }
 
@@ -93,7 +144,7 @@ public class OpenRouterService {
     }
 
     private OpenRouterResponse sendWithRetries(HttpRequest<?> request, int maxAttempts) {
-        long backoffMillis = 1000L; // initial backoff 1s
+        long backoffMillis = initialBackoffMs; // initial backoff
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 HttpResponse<OpenRouterResponse> resp = httpClient.toBlocking().exchange(request, OpenRouterResponse.class);
@@ -108,16 +159,16 @@ public class OpenRouterService {
                     String retryAfter = resp.getHeaders().get("Retry-After");
                     long waitMillis = computeRetryAfterMillis(retryAfter, backoffMillis);
                     LOG.warn("Received 429 Too Many Requests (attempt {}/{}). Retrying after {} ms", attempt, maxAttempts, waitMillis);
-                    sleep(waitMillis);
-                    backoffMillis = Math.min(backoffMillis * 2, 60_000L);
+                    sleep(waitMillis + jitterMillis(waitMillis));
+                    backoffMillis = Math.min(backoffMillis * 2, maxBackoffMs);
                     continue;
                 }
 
                 // For server errors (5xx) apply backoff and retry
                 if (status.getCode() >= 500 && status.getCode() < 600) {
                     LOG.warn("Server error {} from OpenRouter (attempt {}/{}). Backing off {} ms and retrying", status.getCode(), attempt, maxAttempts, backoffMillis);
-                    sleep(backoffMillis);
-                    backoffMillis = Math.min(backoffMillis * 2, 60_000L);
+                    sleep(backoffMillis + jitterMillis(backoffMillis));
+                    backoffMillis = Math.min(backoffMillis * 2, maxBackoffMs);
                     continue;
                 }
 
@@ -133,7 +184,7 @@ public class OpenRouterService {
                     return null;
                 }
                 sleep(backoffMillis + jitterMillis(backoffMillis));
-                backoffMillis = Math.min(backoffMillis * 2, 60_000L);
+                backoffMillis = Math.min(backoffMillis * 2, maxBackoffMs);
             }
         }
         return null;
@@ -160,8 +211,8 @@ public class OpenRouterService {
     }
 
     private long jitterMillis(long base) {
-        // up to 20% jitter
-        return (long) (Math.random() * (base * 0.2));
+        // up to jitterFraction of base
+        return (long) (Math.random() * (base * jitterFraction));
     }
 
     private void sleep(long millis) {
@@ -169,6 +220,39 @@ public class OpenRouterService {
             Thread.sleep(millis);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private String buildCacheKey(String worldDescription, List<String> availableModsList, String model) {
+        StringJoiner joiner = new StringJoiner("|", "[", "]");
+        joiner.add(model == null ? "" : model);
+        joiner.add(worldDescription == null ? "" : worldDescription);
+        if (availableModsList != null && !availableModsList.isEmpty()) {
+            for (String s : availableModsList) joiner.add(Integer.toHexString(Objects.hashCode(s)));
+        }
+        return Integer.toHexString(joiner.toString().hashCode());
+    }
+
+    private String getCachedResponse(String key) {
+        CacheEntry entry = cache.get(key);
+        if (entry == null) return null;
+        if (cacheTtlMs > 0 && (System.currentTimeMillis() - entry.createdAt) > cacheTtlMs) {
+            cache.remove(key);
+            return null;
+        }
+        return entry.response;
+    }
+
+    private void putCachedResponse(String key, String response) {
+        cache.put(key, new CacheEntry(response, System.currentTimeMillis()));
+    }
+
+    private static class CacheEntry {
+        final String response;
+        final long createdAt;
+        CacheEntry(String response, long createdAt) {
+            this.response = response;
+            this.createdAt = createdAt;
         }
     }
 
